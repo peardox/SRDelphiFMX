@@ -2,7 +2,30 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (29 October 2026, 21:30)
+## Where to pick up (29 October 2026, 22:00)
+
+**SRDemo now crashes very quickly** (the owner's report after pushing the
+repository with the compiled bridge in `dll/` and FastMM5 as a submodule). The
+cause isn't known. Delivered to find it:
+
+- FastMM5 full debug mode in Debug builds, with its event log in
+  `SRDemo_FastMM.log`.
+- `lib/SRDiagLog.pas`: `SRDemo.log`, plus first-chance and unhandled native
+  exception logging, with the module and offset.
+- Bridge logging (`srb_SetLogCallback`), with FATAL handlers for abort,
+  terminate, pure virtual calls and invalid parameters.
+- Stage tracing of the first 5 frames.
+- Skip switches for tracking, rendering and weaving.
+- `tools/enable_crashdumps.reg`.
+
+See "Finding crashes" in the README. Next step: the owner rebuilds the bridge
+and SRDemo (Debug), runs it until it crashes, and sends `SRDemo.log`,
+`SRDemo_FastMM.log` if it exists, and the Event Viewer entry if the log just
+stops.
+
+The drift problem below is still open; it may share a cause with the crash.
+
+## Earlier: the drift (29 October 2026, 21:30)
 
 **First run on the hardware.** SRDemo ran and *almost* worked: the weave looked right. But after about one full turn of the cube (the spin lasts 8 s), the image "splits into two and each part drifts off to a new location". The window was small, so the owner wasn't sure.
 
@@ -29,7 +52,12 @@ Next step: the owner runs SRDemo maximised or full screen (F11), reproduces the 
 
 ## How the owner works
 
-The same as GDEM: Delphi 13 FMX on Windows. Supply whole files in a zip of changed files only, with paths from the repository root. Logs are the main evidence, so make log lines say exactly what happened.
+The same as GDEM: Delphi 13 FMX on Windows.
+
+The compiled bridge is committed in `dll/SRFmxBridge.dll`. Building the bridge
+with CMake overwrites that file (a post-build step in `bridge/CMakeLists.txt`),
+and SRDemo's post-build step copies it next to the exe. Whenever a delivery
+changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supply whole files in a zip of changed files only, with paths from the repository root. Logs are the main evidence, so make log lines say exactly what happened.
 
 ## Design notes
 

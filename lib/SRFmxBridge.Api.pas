@@ -125,6 +125,10 @@ type
   { Pointer to a @link(TSRBStats). }
   PSRBStats = ^TSRBStats;
 
+  { Receives one zero-terminated UTF-8 log line from the bridge, on any
+    thread; see @link(srb_SetLogCallback). }
+  TSRBLogCallback = procedure(Line: PAnsiChar); cdecl;
+
   { Three singles: an eye position in millimetres. }
   TSRBVec3 = array[0..2] of Single;
 
@@ -171,6 +175,11 @@ procedure srb_SetLens(enabled: Int32); cdecl; external SRBridgeDll delayed;
 function srb_PollSystemEvent(ev: PSRBSystemEvent): Int32; cdecl; external SRBridgeDll delayed;
 { Fills @code(stats) with the bridge's counters. }
 function srb_GetStats(stats: PSRBStats): Int32; cdecl; external SRBridgeDll delayed;
+{ Sends the bridge's log lines to @code(callback) (nil to stop). Also
+  installs last-gasp handlers for abort, @code(std::terminate), pure virtual
+  calls and CRT invalid parameters, which log a FATAL line before the program
+  ends. The callback is called from any thread and must be thread-safe. }
+procedure srb_SetLogCallback(callback: TSRBLogCallback); cdecl; external SRBridgeDll delayed;
 { @returns(the last error message, UTF-8) }
 function srb_GetLastError: PAnsiChar; cdecl; external SRBridgeDll delayed;
 { @returns(the SR platform version, UTF-8) }

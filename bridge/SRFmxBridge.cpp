@@ -14,6 +14,11 @@
 #include <dxgi1_2.h>
 
 #include <float.h>
+#include <cstdarg>
+#include <csignal>
+#include <cstdio>
+#include <exception>
+#include <stdlib.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -158,9 +163,66 @@ struct FPGuard {
 
 template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
+// ---------------------------------------------------------------------------
+// Diagnostic log: lines go to a callback set by the host (srb_SetLogCallback),
+// which must be thread-safe, since SR calls us on its own threads.
+// ---------------------------------------------------------------------------
+std::atomic<SRB_LogCallback> g_logCallback{ nullptr };
+std::atomic<int> g_submitTrace{ 3 };   // first submits logged step by step
+
+void BLog(const char* fmt, ...)
+{
+    SRB_LogCallback cb = g_logCallback.load();
+    if (!cb) return;
+    char buf[1024];
+    int n = std::snprintf(buf, sizeof(buf), "[bridge t%lu] ", static_cast<unsigned long>(GetCurrentThreadId()));
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buf + n, sizeof(buf) - n, fmt, args);
+    va_end(args);
+    cb(buf);
+}
+
+// Last-gasp handlers: these are reached when something in this process (most
+// likely the SR runtime or a driver) aborts, throws past every catch, calls a
+// pure virtual function or passes a bad argument to the CRT. They log and then
+// let the process end as it would have.
+void OnAbortSignal(int)
+{
+    BLog("FATAL: abort() called (SIGABRT) - a C++ library gave up");
+}
+void OnTerminate()
+{
+    BLog("FATAL: std::terminate - a C++ exception escaped on thread %lu",
+         static_cast<unsigned long>(GetCurrentThreadId()));
+    std::abort();
+}
+void OnPureCall()
+{
+    BLog("FATAL: pure virtual function call (an object used after destruction?)");
+    std::abort();
+}
+void OnInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t)
+{
+    BLog("FATAL: CRT invalid parameter");
+    std::abort();
+}
+
+void InstallFatalHandlers()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    std::signal(SIGABRT, OnAbortSignal);
+    std::set_terminate(OnTerminate);
+    _set_purecall_handler(OnPureCall);
+    _set_invalid_parameter_handler(OnInvalidParameter);
+}
+
 int Fail(int code, const char* msg)
 {
     g.lastError = msg;
+    BLog("error %d: %s", code, msg);
     return code;
 }
 
@@ -234,6 +296,7 @@ void OnSystemEvent(SR_systemEvent ev)   // called on an SR thread
     }
     if (e.eventType == 1 /* ContextInvalid */)
         g.contextInvalid = true;
+    BLog("SR system event %llu: %s", static_cast<unsigned long long>(e.eventType), e.message);
 
     std::lock_guard<std::mutex> lock(g.evMutex);
     if (g.events.size() > 256) g.events.pop_front();
@@ -243,14 +306,16 @@ void OnSystemEvent(SR_systemEvent ev)   // called on an SR thread
 void TearDownSR()
 {
     g.contextInvalid = false;   // cleared first so an event arriving during teardown isn't lost
-    if (g.weaver) { g.weaver->destroy(); g.weaver = nullptr; }
+    if (g.weaver || g.srContext) BLog("tearing down SR (weaver %p, context %p)", (void*)g.weaver, g.srContext);
+    if (g.weaver) { g.weaver->destroy(); g.weaver = nullptr; BLog("weaver destroyed"); }
     if (g.sysListener && g.api.deleteSystemEventListener) { g.api.deleteSystemEventListener(g.sysListener); g.sysListener = nullptr; }
     // display, systemSense and lensHint are owned by the context
     g.display = nullptr;
     g.lensHint = nullptr;
     if (g.srContext && g.api.deleteSRContext) {
-        try { g.api.deleteSRContext(g.srContext); } catch (...) {}
+        try { g.api.deleteSRContext(g.srContext); } catch (...) { BLog("exception deleting SR context"); }
         g.srContext = nullptr;
+        BLog("SR context deleted");
     }
 }
 
@@ -261,11 +326,13 @@ int CreateSR(double timeoutSeconds)
     auto timedOut = [&]() { return (GetTickCount64() - start) > static_cast<ULONGLONG>(timeoutSeconds * 1000.0); };
 
     // 1. Context (throws SR::ServerNotAvailableException while the SR service starts up)
+    BLog("creating SR context (timeout %.1f s)", timeoutSeconds);
     while (!g.srContext) {
         try { g.srContext = g.api.newSRContext(); } catch (...) { g.srContext = nullptr; }
         if (g.srContext || timedOut()) break;
         Sleep(100);
     }
+    if (g.srContext) BLog("SR context %p", g.srContext);
     if (!g.srContext) return Fail(SRB_E_NO_SERVICE, "Could not create SR context - is the SR service running?");
 
     // 2. Display ready
@@ -281,6 +348,10 @@ int CreateSR(double timeoutSeconds)
     }
     if (!ready) { TearDownSR(); return Fail(SRB_E_NO_DISPLAY, "SR display not ready (cable / USB connected? display in extended mode at native resolution?)"); }
 
+    BLog("display %p ready: %d x %d px, %.1f x %.1f cm", g.display,
+         g.api.getResolutionWidth(g.display), g.api.getResolutionHeight(g.display),
+         g.api.getPhysicalSizeWidth(g.display), g.api.getPhysicalSizeHeight(g.display));
+
     // 3. System events
     try {
         void* sense = g.api.createSystemSense(g.srContext);
@@ -293,6 +364,8 @@ int CreateSR(double timeoutSeconds)
         if (g.lensHint) { if (g.lensOn) g.api.lensEnableHint(g.lensHint); else g.api.lensDisableHint(g.lensHint); }
     } catch (...) {}
 
+    BLog("system listener %p, lens hint %p", g.sysListener, g.lensHint);
+
     // 5. Weaver (the SR C context handle is the C++ SR::SRContext*)
     SR::IDX11Weaver1* w = nullptr;
     WeaverErrorCode rc = WeaverErrorCode::WeaverTextureNotFound;
@@ -300,12 +373,14 @@ int CreateSR(double timeoutSeconds)
     catch (...) { w = nullptr; }
     if (rc != WeaverErrorCode::WeaverSuccess || !w) { TearDownSR(); return Fail(SRB_E_WEAVER, "SR::CreateDX11Weaver failed"); }
     g.weaver = w;
+    BLog("weaver %p created", (void*)w);
     g.weaver->setShaderSRGBConversion(false, false);  // we use *_SRGB views: hardware conversion
     if (g.latencyFrames) g.weaver->setLatencyInFrames(g.latencyFrames);
     g.weaverInputDirty = true;
 
     // 6. Initialise context after all senses / weaver are created (as in the SDK samples)
-    try { g.api.initializeSRContext(g.srContext); } catch (...) {}
+    try { g.api.initializeSRContext(g.srContext); } catch (...) { BLog("exception in initializeSRContext"); }
+    BLog("SR context initialised");
     return SRB_OK;
 }
 
@@ -468,6 +543,9 @@ SRB_API int32_t srb_Initialize(void* parentWnd, double timeoutSeconds)
         return Fail(SRB_E_ARGS, "Already initialised for a different window (one SR window per process)");
     }
     g.lastError.clear();
+    InstallFatalHandlers();
+    g_submitTrace = 3;
+    BLog("srb_Initialize(parent %p)", parentWnd);
     HWND parent = static_cast<HWND>(parentWnd);
     if (!parent || !IsWindow(parent)) return Fail(SRB_E_ARGS, "Invalid parent window handle");
     if (!LoadSRApi()) return SRB_E_SR_DLL_MISSING;
@@ -476,16 +554,19 @@ SRB_API int32_t srb_Initialize(void* parentWnd, double timeoutSeconds)
     if (!CreateChildWindow(parent)) return Fail(SRB_E_WINDOW, "Could not create child window");
     if (!CreateD3D()) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return Fail(SRB_E_D3D, "Direct3D 11 initialisation failed"); }
 
+    BLog("child window %p, D3D device %p, swap chain %p", (void*)g.child, (void*)g.dev, (void*)g.swap);
     int rc = CreateSR(timeoutSeconds);
     if (rc != SRB_OK) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return rc; }
 
     g.initialized = true;
+    BLog("srb_Initialize done");
     return SRB_OK;
 }
 
 SRB_API void srb_Finalize(void)
 {
     SRB_ENTRY;
+    BLog("srb_Finalize");
     try { TearDownSR(); } catch (...) { g.weaver = nullptr; g.srContext = nullptr; }          // weaver before context, context before D3D
     DestroyD3D();
     if (g.child) { DestroyWindow(g.child); g.child = nullptr; }
@@ -593,6 +674,8 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
     if (!g.initialized) return SRB_E_NOT_INITIALIZED;
     if (!pixels || viewWidth < 1 || viewHeight < 1 || pitch < viewWidth * 8) return SRB_E_ARGS;
     SRB_ENTRY;
+    const bool trace = g_submitTrace > 0;
+    if (trace) { g_submitTrace--; BLog("submit: %d x %d per eye, pitch %d, format %d", viewWidth, viewHeight, pitch, pixelFormat); }
     try {
 
     // Recover from SR context loss (e.g. SR service restart), at most every 3 s
@@ -601,6 +684,7 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
         ULONGLONG now = GetTickCount64();
         if (now - g.lastReinitTick > 3000) {
             g.lastReinitTick = now;
+            BLog("re-creating SR (context invalid %d, weaver %p)", g.contextInvalid ? 1 : 0, (void*)g.weaver);
             TearDownSR();
             g.stats.reinitAttempts++;
             if (CreateSR(0.0) == SRB_OK)   // single non-blocking attempt; on failure we show 2D
@@ -610,8 +694,10 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
 
     if (!EnsureViewTexture(viewWidth, viewHeight, pixelFormat)) return Fail(SRB_E_D3D, "Could not create view texture");
     g.ctx->UpdateSubresource(g.sbsTex, 0, nullptr, pixels, static_cast<UINT>(pitch), 0);
+    if (trace) BLog("submit: uploaded");
 
     if (g.weaver && g.weaverInputDirty) {
+        BLog("setInputViewTexture(%p, %d, %d)", (void*)g.sbsSrv, viewWidth, viewHeight);
         g.weaver->setInputViewTexture(g.sbsSrv, viewWidth, viewHeight, ViewSrvFormat());
         g.weaverInputDirty = false;
     }
@@ -625,7 +711,8 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
 
     if (g.weaver) {
         try { g.weaver->weave(); }
-        catch (...) { g.contextInvalid = true; g.stats.exceptions++; }
+        catch (...) { g.contextInvalid = true; g.stats.exceptions++; BLog("exception in weave()"); }
+        if (trace) BLog("submit: woven");
     } else {
         // 2D fallback: show the left view unwoven.
         ID3D11Texture2D* bb = nullptr;
@@ -640,6 +727,7 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
     HRESULT hr = g.swap->Present(g.vsync ? 1 : 0, 0);
     g.stats.framesSubmitted++;
     g.stats.lastPresentHr = static_cast<int32_t>(hr);
+    if (trace) BLog("submit: presented, hr 0x%08X", static_cast<unsigned>(hr));
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
         return Fail(SRB_E_D3D, "D3D device removed - call srb_Finalize/srb_Initialize");
     if (hr == DXGI_STATUS_OCCLUDED) { g.stats.framesOccluded++; return SRB_S_OCCLUDED; }
@@ -650,6 +738,7 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
     } catch (...) {
         g.contextInvalid = true;
         g.stats.exceptions++;
+        BLog("exception in srb_SubmitViews");
         return Fail(SRB_S_2D_FALLBACK, "Exception during weaving; will re-create SR context");
     }
 }
@@ -715,4 +804,11 @@ SRB_API int32_t srb_GetStats(SRB_Stats* stats)
         try { stats->weaverLatencyUs = g.weaver->getLatency(); } catch (...) {}
     }
     return SRB_OK;
+}
+
+SRB_API void srb_SetLogCallback(SRB_LogCallback callback)
+{
+    g_logCallback = callback;
+    InstallFatalHandlers();
+    BLog("log callback set");
 }

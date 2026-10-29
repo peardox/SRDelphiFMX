@@ -53,6 +53,14 @@ type
     FDepth: TTrackBar;
     { Diagnostic log. }
     FLog: TMemo;
+    { Skip the eye tracker (use nominal eyes). }
+    FSkipTracking: TCheckBox;
+    { Skip rendering the scene. }
+    FSkipRender: TCheckBox;
+    { Skip handing the views to the bridge. }
+    FSkipSubmit: TCheckBox;
+    { Frames drawn, for the periodic FastMM5 scan. }
+    FFrames: Integer;
     { Builds the 3D scene. }
     procedure BuildScene;
     { Builds the toolbar and the log. }
@@ -76,6 +84,13 @@ type
     { Sets the eye separation scale.
       @param(Sender the track bar) }
     procedure DepthChange(Sender: TObject);
+    { Applies the diagnostic skip checkboxes to the renderer.
+      @param(Sender a checkbox) }
+    procedure SkipChange(Sender: TObject);
+    { Logs an exception that reached the application, then shows it.
+      @param(Sender the object that raised it)
+      @param(E the exception) }
+    procedure AppException(Sender: TObject; E: Exception);
     { Copies the log to the clipboard.
       @param(Sender the button) }
     procedure CopyLogClick(Sender: TObject);
@@ -105,9 +120,14 @@ implementation
 
 {$R *.fmx}
 
+uses
+  FastMM5, SRDiagLog;
+
 const
   { Most lines kept in the log. }
   MaxLogLines = 3000;
+  { Frames between FastMM5 scans of its debug blocks for corruption. }
+  FastMMScanEvery = 30;
 
 function TfrmMain.MakeMaterial(Color: TAlphaColor): TLightMaterialSource;
 begin
@@ -202,6 +222,41 @@ begin
   FLog.TextSettings.Font.Family := 'Consolas';
   FLog.TextSettings.Font.Size := 11;
 
+  // Diagnostics row, between the toolbar and the log
+  Bar := TLayout.Create(Self);
+  Bar.Parent := Self;
+  Bar.Position.Y := 5000;
+  Bar.Align := TAlignLayout.Bottom;
+  Bar.Height := 30;
+  Bar.Padding.Rect := RectF(8, 2, 8, 2);
+
+  Lbl := TLabel.Create(Self);
+  Lbl.Parent := Bar;
+  Lbl.Align := TAlignLayout.Left;
+  Lbl.Width := 80;
+  Lbl.Text := 'Diagnostics:';
+
+  FSkipTracking := TCheckBox.Create(Self);
+  FSkipTracking.Parent := Bar;
+  FSkipTracking.Align := TAlignLayout.Left;
+  FSkipTracking.Width := 150;
+  FSkipTracking.Text := 'Skip eye tracking';
+  FSkipTracking.OnChange := SkipChange;
+
+  FSkipRender := TCheckBox.Create(Self);
+  FSkipRender.Parent := Bar;
+  FSkipRender.Align := TAlignLayout.Left;
+  FSkipRender.Width := 150;
+  FSkipRender.Text := 'Skip rendering';
+  FSkipRender.OnChange := SkipChange;
+
+  FSkipSubmit := TCheckBox.Create(Self);
+  FSkipSubmit.Parent := Bar;
+  FSkipSubmit.Align := TAlignLayout.Left;
+  FSkipSubmit.Width := 180;
+  FSkipSubmit.Text := 'Skip weaving (bridge)';
+  FSkipSubmit.OnChange := SkipChange;
+
   Bar := TLayout.Create(Self);
   Bar.Parent := Self;
   Bar.Position.Y := 0;
@@ -271,6 +326,7 @@ end;
 procedure TfrmMain.FormCreate(Sender: TObject);
 begin
   Caption := 'SRDemo: LeiaSR + FireMonkey TViewport3D';
+  Application.OnException := AppException;
   WindowState := TWindowState.wsMaximized;
   BuildControls;
   BuildScene;
@@ -281,11 +337,19 @@ begin
   FStereo.OnError := StereoError;
   FStereo.OnLog := StereoLog;
   FStereo.OnEyesUpdated := StereoEyes;
+  FStereo.TraceFrames := 5;   // stage-by-stage log of the first frames
+  AddLog('Log file: ' + DiagLogFileName);
+  if FastMM_DebugModeActive then
+    AddLog(Format('FastMM5 full debug mode ON: debug blocks scanned every %d frames', [FastMMScanEvery]))
+  else
+    AddLog('FastMM5 full debug mode off');
+  DiagLogAttachBridge;
   FStereo.Active := True;   // completes once the form is shown
 end;
 
 procedure TfrmMain.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
+  AddLog('Closing');
   FStereo.Active := False;
 end;
 
@@ -309,6 +373,7 @@ begin
     FLog.Lines.EndUpdate;
   end;
   FLog.GoToTextEnd;
+  DiagLog(Msg);
 end;
 
 procedure TfrmMain.ToggleChange(Sender: TObject);
@@ -342,6 +407,29 @@ end;
 procedure TfrmMain.DepthChange(Sender: TObject);
 begin
   FStereo.EyeSeparationScale := FDepth.Value;
+end;
+
+procedure TfrmMain.SkipChange(Sender: TObject);
+var
+  Skip: TSRDiagnosticSkips;
+begin
+  Skip := [];
+  if FSkipTracking.IsChecked then
+    Include(Skip, dsTracking);
+  if FSkipRender.IsChecked then
+    Include(Skip, dsRender);
+  if FSkipSubmit.IsChecked then
+    Include(Skip, dsSubmit);
+  FStereo.DiagnosticSkip := Skip;
+  AddLog(Format('Diagnostics: skip tracking %s, rendering %s, weaving %s',
+    [BoolToStr(dsTracking in Skip, True), BoolToStr(dsRender in Skip, True),
+     BoolToStr(dsSubmit in Skip, True)]));
+end;
+
+procedure TfrmMain.AppException(Sender: TObject; E: Exception);
+begin
+  DiagLog('EXCEPTION reached the application: ' + E.ClassName + ': ' + E.Message);
+  Application.ShowException(E);
 end;
 
 procedure TfrmMain.CopyLogClick(Sender: TObject);
@@ -381,6 +469,12 @@ procedure TfrmMain.StereoEyes(Sender: TObject; const LeftMM, RightMM: TPoint3D);
 const
   Mode: array[Boolean] of string = ('2D fallback', 'Weaving');
 begin
+  // In full debug mode, look for heap corruption close to when it happens.
+  // A corrupt block is logged to SRDemo_FastMM.log with stack traces, and
+  // an exception is raised, which the renderer reports and stops on.
+  Inc(FFrames);
+  if FastMM_DebugModeActive and (FFrames mod FastMMScanEvery = 0) then
+    FastMM_ScanDebugBlocksForCorruption;
   FStatus.Text := Format('%s   L(%.0f, %.0f, %.0f)  R(%.0f, %.0f, %.0f) mm',
     [Mode[FStereo.Weaving], LeftMM.X, LeftMM.Y, LeftMM.Z, RightMM.X, RightMM.Y, RightMM.Z]);
 end;

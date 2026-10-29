@@ -124,5 +124,13 @@ SRB_API const char* srb_GetPlatformVersion(void);
 
 SRB_API int32_t srb_GetStats(SRB_Stats* stats);
 
+/* Diagnostic log. The callback receives zero-terminated UTF-8 lines, from any
+ * thread (SR calls back on its own threads), so it must be thread-safe and
+ * quick. Setting it also installs last-gasp handlers for abort(),
+ * std::terminate, pure virtual calls and CRT invalid parameters, which log a
+ * FATAL line before the process ends. Pass NULL to stop logging. */
+typedef void (__cdecl *SRB_LogCallback)(const char* line);
+SRB_API void srb_SetLogCallback(SRB_LogCallback callback);
+
 /* Optional: extra folder to search for the SR runtime DLLs. Call before srb_Initialize. */
 SRB_API void srb_SetDllDirectory(const wchar_t* path);

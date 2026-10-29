@@ -30,10 +30,13 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
 | `lib/FMX.SRStereoViewport.Reg.pas` | Registers the component for a design-time package |
 | `lib/SRFmxBridge.Api.pas` | Delphi imports for the bridge DLL |
 | `lib/SimulatedReality.Api.pas` | The SDK's C API (context, display, lens, eye/head/weaver trackers, system events) |
+| `lib/SRDiagLog.pas` | Crash-proof log file, plus handlers that record native crashes and the bridge's own log lines in it |
+| `FastMM5/` | FastMM5 memory manager (submodule, never changed); full debug mode in Debug builds |
 | `bridge/` | C++ source of `SRFmxBridge.dll` and its CMake build |
 | `bridge/sr_stub/` | Stand-in for the SDK's `srcontext.h` that keeps OpenCV out of the bridge |
 | `dll/` | The compiled `SRFmxBridge.dll`. CMake copies it here, and each project's post-build step copies it next to the exe |
 | `tools/pasdoc_check.py` | Checks the Pascal units follow the PasDoc and layout rules |
+| `tools/enable_crashdumps.reg`, `disable_crashdumps.reg` | Turn Windows crash dumps for SRDemo.exe on and off |
 
 New programs go in their own folder beside `SRDemo/`, with their forms in a `ui/` folder inside it. Add `..\lib` to the unit search path, copy the post-build event from `SRDemo.dproj`, and add the project to the group.
 
@@ -112,6 +115,22 @@ With `OnLog` set (SRDemo shows it under the toolbar, with **Copy log** and **Cle
   2. **Projection:** the viewport rectangle in mm and the view size in pixels; the measured axis signs, the reference field of view and the world-to-mm scale; and for each eye the angle of view, the measured focal ratio (1.0000 means the projection matched) and the shear.
   3. **Bridge:** frames presented, woven, 2D and hidden; context re-creations; caught exceptions; the weaver's latency; the last `Present` result; and the back buffer size.
 - **Also:** every SR system event, and every error.
+
+## Finding crashes
+
+A Debug build of SRDemo writes these files beside the exe:
+
+| File | Contents |
+|---|---|
+| `SRDemo.log` | Everything SRDemo logs, written line by line so it survives a crash: the renderer's log; the bridge's own steps (prefixed `[bridge tNNNN]` with the thread id), including SR system events as they arrive on SR's threads; `FIRST CHANCE` lines for serious hardware exceptions (access violation, stack overflow, heap corruption...) with the module and offset where they happened; `UNHANDLED` for the exception that ended the program; and `FATAL` lines from the bridge for `abort()`, `std::terminate`, pure virtual calls and CRT invalid parameters. A run that ended normally finishes with `Log closed normally`. |
+| `SRDemo_FastMM.log` | FastMM5's reports: corrupted, double-freed or freed-then-used blocks of Delphi memory, with stack traces of where each block was allocated and freed, and leaks at exit. Present only if FastMM found something. |
+
+How the pieces help:
+
+- **FastMM5 runs in full debug mode in Debug builds.** The project defines `FastMM_FullDebugModeWhenDLLAvailable`, and the build copies `FastMM_FullDebugMode64.dll` from the submodule next to the exe. The map file is Detailed, so stack traces show units and lines. SRDemo also scans every debug block for corruption every 30 frames, so damage is caught close to when it happens. FastMM5 covers only Delphi's memory, not the bridge's or SR's C++ heaps.
+- **Stage tracing.** The renderer traces its first 5 frames stage by stage (`TraceFrames`), so the last line before a crash shows the stage it died in.
+- **Skip switches.** The **Diagnostics** row in SRDemo skips eye tracking, rendering or weaving, to find which stage is at fault without rebuilding.
+- **When the log simply stops**, with no `FIRST CHANCE`, `UNHANDLED` or `FATAL` line, the program ended in a way no handler sees (a fail-fast). Windows still records it: *Event Viewer > Windows Logs > Application*, as an "Application Error" naming the faulting module, exception code and offset. With `tools/enable_crashdumps.reg` imported, Windows also keeps a full dump in `%LOCALAPPDATA%\CrashDumps`.
 
 ## Constraints of this version
 

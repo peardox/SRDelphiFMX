@@ -1,0 +1,10 @@
+REGEDIT4
+
+; Makes Windows keep a full memory dump when SRDemo.exe crashes, in
+; %LOCALAPPDATA%\CrashDumps. Even crashes that skip every handler in the
+; program (a fail-fast, code C0000409) produce one. Double-click to import
+; (needs administrator rights). tools\disable_crashdumps.reg removes it.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\SRDemo.exe]
+"DumpType"=dword:00000002
+"DumpCount"=dword:00000005

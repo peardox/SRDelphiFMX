@@ -39,7 +39,7 @@
         <DCC_F>false</DCC_F>
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>..\lib;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\lib;..\FastMM5;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>2057</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=0.1.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=$(MSBuildProjectName);ProductVersion=0.1.0.0;Comments=</VerInfo_Keys>
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
@@ -51,11 +51,13 @@
         <Manifest_File>$(BDS)\bin\default_app.manifest</Manifest_File>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <PostBuildEvent><![CDATA[if exist "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" (copy /Y "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" "$(OUTPUTDIR)") else (echo warning: dll\SRFmxBridge.dll not found - build the bridge first, see README)
+if exist "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" (copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)") else (echo warning: FastMM5 submodule missing - run git submodule update --init)
 $(PostBuildEvent)]]></PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
-        <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+        <DCC_Define>DEBUG;FastMM_FullDebugModeWhenDLLAvailable;FastMM_EnableMemoryLeakReporting;$(DCC_Define)</DCC_Define>
+        <DCC_MapFile>3</DCC_MapFile>
         <DCC_DebugDCUs>true</DCC_DebugDCUs>
         <DCC_Optimize>false</DCC_Optimize>
         <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
@@ -72,6 +74,8 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\FastMM5\FastMM5.pas"/>
+        <DCCReference Include="..\lib\SRDiagLog.pas"/>
         <DCCReference Include="ui\MainForm.pas">
             <Form>frmMain</Form>
             <FormType>fmx</FormType>

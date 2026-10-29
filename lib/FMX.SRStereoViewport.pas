@@ -38,6 +38,17 @@ type
     { Only when the program calls @link(TSRStereoRenderer.RenderFrame). }
     lmManual);
 
+  { A stage of each frame that can be skipped, to narrow down a fault. }
+  TSRDiagnosticSkip = (
+    { Ignore the eye tracker and use the nominal eyes. }
+    dsTracking,
+    { Do not render the scene (the views are left as they were). }
+    dsRender,
+    { Do not hand the views to the bridge (nothing is woven or presented). }
+    dsSubmit);
+  { The stages of each frame to skip. }
+  TSRDiagnosticSkips = set of TSRDiagnosticSkip;
+
   { Reports an SR system event.
     @param(Sender the renderer)
     @param(EventType the SR event type)
@@ -155,6 +166,14 @@ type
     FPrevFrameMs: Double;
     { Results of @code(srb_SubmitViews) since the last log line, by kind. }
     FResultCounts: array[0..3] of Integer;
+    { See @link(TSRStereoRenderer.TraceFrames). }
+    FTraceFrames: Integer;
+    { Frames still to trace since starting. }
+    FTraceLeft: Integer;
+    { Frames drawn since starting. }
+    FFrameNo: Int64;
+    { See @link(TSRStereoRenderer.DiagnosticSkip). }
+    FDiagnosticSkip: TSRDiagnosticSkips;
     { See @link(TSRStereoRenderer.OnSystemEvent). }
     FOnSystemEvent: TSRSystemEventNotify;
     { See @link(TSRStereoRenderer.OnError). }
@@ -226,6 +245,10 @@ type
     { Sends one line to @link(TSRStereoRenderer.OnLog).
       @param(Msg the line) }
     procedure Log(const Msg: string);
+    { Logs a stage of the current frame while
+      @link(TSRStereoRenderer.TraceFrames) frames remain to be traced.
+      @param(Stage what is about to happen or just happened) }
+    procedure TraceStage(const Stage: string);
     { Logs the display and window details once after starting. }
     procedure LogStartDetails;
     { Logs one summary line when @link(TSRStereoRenderer.LogInterval) has
@@ -301,6 +324,12 @@ type
     { Milliseconds between summary lines on
       @link(TSRStereoRenderer.OnLog); 0 turns them off. }
     property LogInterval: Integer read FLogInterval write FLogInterval default 1000;
+    { How many frames after starting to log stage by stage on
+      @link(TSRStereoRenderer.OnLog), so the last line before a crash shows
+      where it happened. }
+    property TraceFrames: Integer read FTraceFrames write FTraceFrames default 0;
+    { Stages of each frame to skip, to narrow down a fault. }
+    property DiagnosticSkip: TSRDiagnosticSkips read FDiagnosticSkip write FDiagnosticSkip default [];
     { Called once the bridge is running. }
     property OnStarted: TNotifyEvent read FOnStarted write FOnStarted;
     { Called with each SR system event. }
@@ -646,6 +675,8 @@ begin
   FFramesSinceLog := 0;
   FWorstFrameMs := 0;
   FillChar(FResultCounts, SizeOf(FResultCounts), 0);
+  FTraceLeft := FTraceFrames;
+  FFrameNo := 0;
   HookLoop;
   LogStartDetails;
   Result := True;
@@ -673,6 +704,12 @@ function TSRStereoRenderer.DisplayInfo(out Info: TSRBDisplayInfo): Boolean;
 begin
   FillChar(Info, SizeOf(Info), 0);
   Result := FRunning and (srb_GetDisplayInfo(@Info) = SRB_OK);
+end;
+
+procedure TSRStereoRenderer.TraceStage(const Stage: string);
+begin
+  if FTraceLeft > 0 then
+    Log(Format('frame %d: %s', [FFrameNo, Stage]));
 end;
 
 procedure TSRStereoRenderer.LogStartDetails;
@@ -794,8 +831,10 @@ begin
     end;
   end;
   FInRender := True;
+  Inc(FFrameNo);
   try
     try
+      TraceStage('placing window');
       if not UpdateWindowBounds then
         Exit;
       if not Supports(FViewport, IViewport3D, VP) then
@@ -808,14 +847,25 @@ begin
       H := Round(Ctx.Height);
       if (W < 2) or (H < 2) then
         Exit;
+      TraceStage(Format('context %d x %d (%.1f x %.1f), format %d', [W, H, Ctx.Width, Ctx.Height,
+        Ord(Ctx.PixelFormat)]));
 
       NowMs := FClock.Elapsed.TotalMilliseconds;
       FWorstFrameMs := Max(FWorstFrameMs, NowMs - FPrevFrameMs);
       FPrevFrameMs := NowMs;
 
-      srb_GetEyePositions(L, R);
-      EL := Point3D(L[0], L[1], L[2]);
-      ER := Point3D(R[0], R[1], R[2]);
+      if dsTracking in FDiagnosticSkip then
+      begin
+        EL := Point3D(0, 0, 0);
+        ER := EL;
+      end
+      else
+      begin
+        srb_GetEyePositions(L, R);
+        EL := Point3D(L[0], L[1], L[2]);
+        ER := Point3D(R[0], R[1], R[2]);
+      end;
+      TraceStage('eyes L' + FmtPt(EL) + ' R' + FmtPt(ER));
       FUsingNominalEyes := (EL.Z < MinEyeDistanceMM) or (ER.Z < MinEyeDistanceMM);
       if FUsingNominalEyes then
       begin
@@ -833,6 +883,7 @@ begin
 
       if srb_GetWindowRectMM(Cx, Cy, Wmm, Hmm) <> SRB_OK then
         Exit;
+      TraceStage(Format('window c(%.1f, %.1f) %.1f x %.1f mm', [Cx, Cy, Wmm, Hmm]));
       if (Wmm <= 0) or (Hmm <= 0) then
         Exit;
       FWinCenterMM := PointF(Cx, Cy);
@@ -844,17 +895,30 @@ begin
       Pitch := W * 2 * 4;
       if Length(FBuffer) <> Pitch * H then
         SetLength(FBuffer, Pitch * H);
-      RenderEye(Ctx, Cam, EL, @FBuffer[0], Pitch, FCalLeft);
-      RenderEye(Ctx, Cam, ER, @FBuffer[W * 4], Pitch, FCalRight);
-      // Put the normal camera back so picking (ObjectAtPoint, Pick) works
-      Ctx.SetCameraMatrix(Cam.CameraMatrix);
-      Ctx.SetCameraAngleOfView(Cam.AngleOfView);
+      if not (dsRender in FDiagnosticSkip) then
+      begin
+        TraceStage(Format('rendering left eye into %d-byte buffer, pitch %d', [Length(FBuffer), Pitch]));
+        RenderEye(Ctx, Cam, EL, @FBuffer[0], Pitch, FCalLeft);
+        TraceStage('rendering right eye');
+        RenderEye(Ctx, Cam, ER, @FBuffer[W * 4], Pitch, FCalRight);
+        TraceStage('both eyes copied');
+        // Put the normal camera back so picking (ObjectAtPoint, Pick) works
+        Ctx.SetCameraMatrix(Cam.CameraMatrix);
+        Ctx.SetCameraAngleOfView(Cam.AngleOfView);
+      end;
 
       if Ctx.PixelFormat = TPixelFormat.RGBA then
         Fmt := SRB_FMT_RGBA8
       else
         Fmt := SRB_FMT_BGRA8;
-      RC := srb_SubmitViews(@FBuffer[0], W, H, Pitch, Fmt);
+      if dsSubmit in FDiagnosticSkip then
+        RC := SRB_S_2D_FALLBACK
+      else
+      begin
+        TraceStage('submitting');
+        RC := srb_SubmitViews(@FBuffer[0], W, H, Pitch, Fmt);
+        TraceStage(Format('submitted, result %d', [RC]));
+      end;
       FWeaving := RC = SRB_OK;
       FOccluded := RC = SRB_S_OCCLUDED;
       if RC < 0 then
@@ -871,6 +935,9 @@ begin
       LogPeriodic;
       if Assigned(FOnEyesUpdated) then
         FOnEyesUpdated(Self, FLeftEyeMM, FRightEyeMM);
+      TraceStage('done');
+      if FTraceLeft > 0 then
+        Dec(FTraceLeft);
     except
       on E: Exception do
       begin
@@ -903,7 +970,10 @@ var
 begin
   FillChar(Cal, SizeOf(Cal), 0);
   if not Ctx.BeginScene then
+  begin
+    TraceStage('  BeginScene returned False');
     Exit;
+  end;
   try
     // Measure FMX's conventions against the reference camera instead of
     // assuming them: which local axes point forward, right and up on screen,
@@ -948,11 +1018,16 @@ begin
 
     Ctx.SetCameraMatrix(PassM);
     SetVerticalTanHalf(Ctx, (FWinSizeMM.Height * 0.5) / EyeMM.Z, Cal.AngleDeg, Cal.FocalRatio);
+    TraceStage(Format('  projection set: scale %.5f aov %.2f focal %.4f shear (%.4f, %.4f)',
+      [Cal.Scale, Cal.AngleDeg, Cal.FocalRatio, Cal.ShearX, Cal.ShearY]));
     RenderScene(Ctx);
+    TraceStage('  scene rendered');
   finally
     Ctx.EndScene;
   end;
+  TraceStage(Format('  copying %d x %d to buffer', [Round(Ctx.Width), Round(Ctx.Height)]));
   Ctx.CopyToBits(Dest, Pitch, Rect(0, 0, Round(Ctx.Width), Round(Ctx.Height)));
+  TraceStage('  copied');
 end;
 
 procedure TSRStereoRenderer.RenderScene(const Ctx: TContext3D);
