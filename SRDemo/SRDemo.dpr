@@ -45,8 +45,21 @@ begin
   if FastMM_DebugModeActive then
     DiagLog('FastMM5 full debug mode ON; its events go to ' + FastMMLogName)
   else
-    DiagLog('FastMM5 full debug mode off (Release build, or FastMM_FullDebugMode64.dll ' +
-      'not beside the executable)');
+  begin
+    // Say exactly which of the two conditions is missing
+{$IFDEF FastMM_FullDebugModeWhenDLLAvailable}
+    if FileExists(ExtractFilePath(ParamStr(0)) + 'FastMM_FullDebugMode64.dll') then
+      DiagLog('FastMM5 full debug mode off: FastMM_FullDebugMode64.dll is beside the ' +
+        'executable but did not load')
+    else
+      DiagLog('FastMM5 full debug mode off: FastMM_FullDebugMode64.dll is not beside the ' +
+        'executable (the post-build step copies it from FastMM5\FullDebugMode DLL\Precompiled)');
+{$ELSE}
+    DiagLog('FastMM5 full debug mode off: FastMM_FullDebugModeWhenDLLAvailable was not ' +
+      'defined when FastMM5.pas was compiled (a Release build, or a Compile rather than a ' +
+      'Build after the project options changed)');
+{$ENDIF}
+  end;
 
   Application.Initialize;
   Application.CreateForm(TfrmMain, frmMain);

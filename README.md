@@ -103,7 +103,7 @@ end;
 
 ### How the projection works
 
-The bridge reports where the viewport sits on the panel, in millimetres, in the same display-centred frame the eye tracker uses. Each eye's camera is the reference camera moved by the eye's offset. A view-space shear, passed through `TContext3D.SetCameraMatrix`, turns FMX's symmetric frustum into the asymmetric "window" frustum. This is Kooima's generalised perspective projection, the same as the SDK's DX11 sample. The code measures FMX's axis and handedness conventions from the context's own matrices every frame instead of assuming them.
+The bridge reports where the viewport sits on the panel, in millimetres, in the same display-centred frame the eye tracker uses. Each eye's camera is the reference camera moved by the eye's offset. A view-space shear, passed through `TContext3D.SetCameraMatrix`, turns FMX's symmetric frustum into the asymmetric "window" frustum. This is Kooima's generalised perspective projection, the same as the SDK's DX11 sample. A zoom in the same matrix gives each eye its true field of view. FMX's own projection is never changed, because `SetCameraAngleOfView` turned out to have no effect on `CurrentProjectionMatrix`. The code measures FMX's axis and handedness conventions from the context's own matrices every frame instead of assuming them, and checks the result against the viewport's corner.
 
 ## The log
 
@@ -112,7 +112,7 @@ With `OnLog` set (SRDemo shows it under the toolbar, with **Copy log** and **Cle
 - **At start:** the SR platform version; the display's resolution, physical size and recommended view size; where the viewport sits on the display in mm; and the settings.
 - **Every `LogInterval`, three lines:**
   1. **Frames and eyes:** frames per second and the worst frame time; how many frames were woven, 2D or hidden; the eye positions and their separation, with `NOMINAL` when there was no valid tracking; and the reference camera's position.
-  2. **Projection:** the viewport rectangle in mm and the view size in pixels; the measured axis signs, the reference field of view and the world-to-mm scale; and for each eye the angle of view, the measured focal ratio (1.0000 means the projection matched) and the shear.
+  2. **Projection:** the viewport rectangle in mm and the view size in pixels; the measured axis signs, the reference field of view and the world-to-mm scale; and for each eye the zoom, the shear, and where the viewport's top-right corner lands in normalised device coordinates. That last value should be (1.0000, 1.0000); anything else means the projection is wrong.
   3. **Bridge:** frames presented, woven, 2D and hidden; context re-creations; caught exceptions; the weaver's latency; the last `Present` result; and the back buffer size.
 - **Also:** every SR system event, and every error.
 

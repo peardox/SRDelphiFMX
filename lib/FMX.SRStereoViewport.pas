@@ -80,10 +80,12 @@ type
     TanRef: Single;
     { World units per millimetre. }
     Scale: Single;
-    { Angle of view set for the eye, in degrees. }
-    AngleDeg: Single;
-    { Measured vertical focal length divided by the wanted one (1 = exact). }
-    FocalRatio: Single;
+    { Zoom applied in view space so FMX's fixed projection gives the eye's
+      field of view (reference tangent over the eye's). }
+    Zoom: Single;
+    { Where the viewport's top-right corner lands, in normalised device
+      coordinates: (1, 1) when the projection is right. }
+    CornerNdc: TPointF;
     { Shear applied in x (screen centre offset over depth). }
     ShearX: Single;
     { Shear applied in y. }
@@ -142,6 +144,9 @@ type
     FInRender: Boolean;
     { Whether the last frame had no valid tracking and used the nominal eyes. }
     FUsingNominalEyes: Boolean;
+    { Whether the last frame's eyes were too close together or too far apart
+      and were rebuilt around their midpoint. }
+    FIpdRepaired: Boolean;
     { What the left eye's render measured. }
     FCalLeft: TSREyeCalibration;
     { What the right eye's render measured. }
@@ -365,6 +370,12 @@ const
   NominalRightX = 31.5;
   { Nominal viewing distance, millimetres. }
   NominalZ = 650.0;
+  { Eye separations outside MinIpdMM..MaxIpdMM are treated as bad tracking. }
+  MinIpdMM = 45.0;
+  { See @link(MinIpdMM). }
+  MaxIpdMM = 85.0;
+  { Separation used to rebuild bad eye pairs around their midpoint, mm. }
+  NominalIpdMM = 63.0;
 
 { Formats a point with no decimals for the log.
   @param(P the point)
@@ -383,42 +394,6 @@ begin
     Result := '+'
   else
     Result := '-';
-end;
-
-{ Sets the context's angle of view so that the projection's vertical
-  half-angle has tangent @code(TanHalf), measuring the result so FMX's own
-  angle convention does not matter.
-  @param(Ctx the context)
-  @param(TanHalf the wanted tangent)
-  @param(AngleDeg receives the angle set, degrees)
-  @param(FocalRatio receives the measured over the wanted focal length) }
-procedure SetVerticalTanHalf(const Ctx: TContext3D; const TanHalf: Single;
-  out AngleDeg, FocalRatio: Single);
-var
-  Target, Lo, Hi, Mid: Single;
-  I: Integer;
-begin
-  Target := 1 / TanHalf;
-  AngleDeg := RadToDeg(2 * ArcTan(TanHalf));
-  Ctx.SetCameraAngleOfView(AngleDeg);
-  FocalRatio := Abs(Ctx.CurrentProjectionMatrix.m22) / Target;
-  if Abs(FocalRatio - 1) < 0.002 then
-    Exit;
-  // Not the standard vertical convention: bisect (|m22| falls as the angle grows)
-  Lo := 0.1;
-  Hi := 179.0;
-  for I := 1 to 32 do
-  begin
-    Mid := (Lo + Hi) * 0.5;
-    Ctx.SetCameraAngleOfView(Mid);
-    if Abs(Ctx.CurrentProjectionMatrix.m22) > Target then
-      Lo := Mid
-    else
-      Hi := Mid;
-  end;
-  AngleDeg := (Lo + Hi) * 0.5;
-  Ctx.SetCameraAngleOfView(AngleDeg);
-  FocalRatio := Abs(Ctx.CurrentProjectionMatrix.m22) / Target;
 end;
 
 { TSRStereoRenderer }
@@ -734,6 +709,7 @@ end;
 procedure TSRStereoRenderer.LogPeriodic;
 const
   NominalTag: array[Boolean] of string = ('', ' NOMINAL');
+  IpdTag: array[Boolean] of string = ('', ' IPD-REBUILT');
 var
   NowMs: Int64;
   Secs: Double;
@@ -748,16 +724,16 @@ begin
   Secs := (NowMs - FLastLogMs) / 1000;
   Ipd := FLeftEyeMM.Distance(FRightEyeMM);
   Log(Format('%.1f fps (worst %.0f ms) | woven %d 2D %d hidden %d | eyes L%s R%s ipd %.1f%s | ' +
-    'cam %s',
+    'cam %s%s',
     [FFramesSinceLog / Secs, FWorstFrameMs, FResultCounts[0], FResultCounts[1],
      FResultCounts[2], FmtPt(FLeftEyeMM), FmtPt(FRightEyeMM), Ipd,
-     NominalTag[FUsingNominalEyes], FmtPt(FRefCameraPos)]));
+     NominalTag[FUsingNominalEyes], FmtPt(FRefCameraPos), IpdTag[FIpdRepaired]]));
   Log(Format('  viewport c(%.1f, %.1f) %.1fx%.1f mm, view %dx%d | cal R%s U%s F%s tanRef %.4f ' +
-    'scale %.5f | L aov %.2f focal %.4f shear (%.4f, %.4f) | R aov %.2f focal %.4f shear (%.4f, %.4f)',
+    'scale %.5f | L zoom %.4f corner (%.4f, %.4f) shear (%.4f, %.4f) | R zoom %.4f corner (%.4f, %.4f) shear (%.4f, %.4f)',
     [FWinCenterMM.X, FWinCenterMM.Y, FWinSizeMM.Width, FWinSizeMM.Height, FViewSize.cx,
      FViewSize.cy, FmtSign(FCalLeft.SgnR), FmtSign(FCalLeft.SgnU), FmtSign(FCalLeft.SgnF),
-     FCalLeft.TanRef, FCalLeft.Scale, FCalLeft.AngleDeg, FCalLeft.FocalRatio,
-     FCalLeft.ShearX, FCalLeft.ShearY, FCalRight.AngleDeg, FCalRight.FocalRatio,
+     FCalLeft.TanRef, FCalLeft.Scale, FCalLeft.Zoom, FCalLeft.CornerNdc.X, FCalLeft.CornerNdc.Y,
+     FCalLeft.ShearX, FCalLeft.ShearY, FCalRight.Zoom, FCalRight.CornerNdc.X, FCalRight.CornerNdc.Y,
      FCalRight.ShearX, FCalRight.ShearY]));
   if srb_GetStats(@Stats) = SRB_OK then
     Log(Format('  bridge: presented %d woven %d 2D %d hidden %d | reinit %d/%d exceptions %d | ' +
@@ -872,6 +848,18 @@ begin
         EL := Point3D(NominalLeftX, 0, NominalZ);
         ER := Point3D(NominalRightX, 0, NominalZ);
       end;
+      // Before the tracker locks on, the weaver reports both eyes at the same
+      // point (the first log had L = R = (0, 100, 600)), and while it acquires
+      // the separation can be far off (16 mm). Keep the head position but use
+      // a normal separation, so the two views are never the same picture.
+      FIpdRepaired := not InRange(EL.Distance(ER), MinIpdMM, MaxIpdMM);
+      if FIpdRepaired then
+      begin
+        Mid := (EL + ER) * 0.5;
+        EL := Mid - Point3D(NominalIpdMM * 0.5, 0, 0);
+        ER := Mid + Point3D(NominalIpdMM * 0.5, 0, 0);
+        TraceStage('eye separation out of range; rebuilt around the midpoint');
+      end;
       if not SameValue(FEyeSeparationScale, 1.0) then
       begin
         Mid := (EL + ER) * 0.5;
@@ -953,9 +941,9 @@ end;
 procedure TSRStereoRenderer.RenderEye(const Ctx: TContext3D; const RefCamera: TCamera;
   const EyeMM: TPoint3D; Dest: Pointer; Pitch: Integer; out Cal: TSREyeCalibration);
 var
-  RefM, ViewProj, EyeM, ShearInv, PassM: TMatrix3D;
+  RefM, ViewProj, EyeM, ViewInv, PassM: TMatrix3D;
   V: TVector3D;
-  Dx, Dy, Ez, A, B, C: Single;
+  Dx, Dy, Ez, A, B, C, TanEye: Single;
 
   { Takes a point in the reference camera's local space to clip space.
     @param(X local x)
@@ -1001,25 +989,46 @@ begin
     EyeM := TMatrix3D.CreateTranslation(Point3D(Cal.SgnR * Dx, Cal.SgnU * Dy,
       Cal.SgnF * (FFocusDistance - Ez))) * RefM;
 
-    // Off-axis projection as a view-space shear: the screen centre, at
-    // (A, B, C) from the eye in its local space, is sheared onto the view
-    // axis, after which FMX's symmetric frustum is the window frustum
-    // (Kooima's generalised perspective projection, as in the SDK sample).
-    // SetCameraMatrix(M) uses M's inverse as the view, so pass Shear^-1 * EyeM.
+    // The whole off-axis projection is built into the view matrix; FMX's own
+    // projection is left exactly as the reference camera has it. (Changing
+    // the angle of view with SetCameraAngleOfView did not change
+    // CurrentProjectionMatrix: the first hardware log showed it fixed at the
+    // reference 45 degrees, so the eyes were drawn with the wrong field of
+    // view, which is what made the image split and drift.)
+    //
+    // In the eye's local space the screen centre is at (A, B, C). A shear
+    //   x' = x - (A/C) z,  y' = y - (B/C) z
+    // moves it onto the view axis, so FMX's symmetric frustum becomes the
+    // asymmetric window frustum (Kooima's generalised perspective
+    // projection, as in the SDK sample). A zoom of x' and y' by
+    // Zoom = TanRef / TanEye then makes the reference field of view equal the
+    // eye's: the viewport exactly fills the image from where the eye is.
+    // SetCameraMatrix(M) uses M's inverse as the view, so pass
+    // (Shear * Zoom)^-1 * EyeM.
     A := -Cal.SgnR * Dx;
     B := -Cal.SgnU * Dy;
     C := Cal.SgnF * Ez;
     Cal.ShearX := A / C;
     Cal.ShearY := B / C;
-    ShearInv := TMatrix3D.Identity;
-    ShearInv.m31 := Cal.ShearX;
-    ShearInv.m32 := Cal.ShearY;
-    PassM := ShearInv * EyeM;
-
+    TanEye := (FWinSizeMM.Height * 0.5) / EyeMM.Z;
+    Cal.Zoom := Cal.TanRef / TanEye;
+    ViewInv := TMatrix3D.Identity;     // inverse of Shear * Zoom
+    ViewInv.m11 := 1 / Cal.Zoom;
+    ViewInv.m22 := 1 / Cal.Zoom;
+    ViewInv.m31 := Cal.ShearX;
+    ViewInv.m32 := Cal.ShearY;
+    PassM := ViewInv * EyeM;
     Ctx.SetCameraMatrix(PassM);
-    SetVerticalTanHalf(Ctx, (FWinSizeMM.Height * 0.5) / EyeMM.Z, Cal.AngleDeg, Cal.FocalRatio);
-    TraceStage(Format('  projection set: scale %.5f aov %.2f focal %.4f shear (%.4f, %.4f)',
-      [Cal.Scale, Cal.AngleDeg, Cal.FocalRatio, Cal.ShearX, Cal.ShearY]));
+
+    // Check: the viewport's top-right corner on the glass must land on the
+    // image's top-right corner, (1, 1) in normalised device coordinates.
+    ViewProj := Ctx.CurrentCameraInvMatrix * Ctx.CurrentProjectionMatrix;
+    V := ClipOfLocal(Cal.SgnR * FWinSizeMM.Width * 0.5 * Cal.Scale,
+      Cal.SgnU * FWinSizeMM.Height * 0.5 * Cal.Scale, Cal.SgnF * FFocusDistance);
+    if V.W <> 0 then
+      Cal.CornerNdc := PointF(V.X / V.W, V.Y / V.W);
+    TraceStage(Format('  projection set: scale %.5f zoom %.4f shear (%.4f, %.4f) corner (%.4f, %.4f)',
+      [Cal.Scale, Cal.Zoom, Cal.ShearX, Cal.ShearY, Cal.CornerNdc.X, Cal.CornerNdc.Y]));
     RenderScene(Ctx);
     TraceStage('  scene rendered');
   finally

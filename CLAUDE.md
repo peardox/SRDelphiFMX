@@ -2,42 +2,41 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (29 October 2026, 22:00)
+## Where to pick up (29 October 2026, 22:15)
 
-**SRDemo now crashes very quickly** (the owner's report after pushing the
-repository with the compiled bridge in `dll/` and FastMM5 as a submodule). The
-cause isn't known. Delivered to find it:
+**First full log from the hardware (21:51), Debug build, maximised on a
+3840 x 2160, 596.7 x 335.7 mm panel; SR platform 1.36.4.35453.**
 
-- FastMM5 full debug mode in Debug builds, with its event log in
-  `SRDemo_FastMM.log`.
-- `lib/SRDiagLog.pas`: `SRDemo.log`, plus first-chance and unhandled native
-  exception logging, with the module and offset.
-- Bridge logging (`srb_SetLogCallback`), with FATAL handlers for abort,
-  terminate, pure virtual calls and invalid parameters.
-- Stage tracing of the first 5 frames.
-- Skip switches for tracking, rendering and weaving.
-- `tools/enable_crashdumps.reg`.
+- **No crash:** the earlier crash did not happen again. The run ended
+  normally after 23 s at 60 fps, with a 3840 x 1700 view per eye, a 52 MB
+  side-by-side buffer, worst frame 27-40 ms, no re-creations and no
+  exceptions.
+- **The drift's cause:** `SetCameraAngleOfView` does not change
+  `CurrentProjectionMatrix`. The bisection in the old `SetVerticalTanHalf` ran
+  down to its 0.1 degree limit, and the measured focal ratio stayed at
+  0.40-0.53. That is exactly 2.414 (cot 22.5, FMX's 45-degree default) divided
+  by the wanted focal length: the matrix never moved off 45 degrees. So each
+  eye was drawn with a field of view about 2.5 times too wide for the real
+  geometry, while the shear assumed the real one. The two views did not match
+  what the lens shows each eye, so they split and slid as the head moved.
+- **Fix, delivered:** FMX's projection stays at the reference camera's. The
+  eye's field of view comes from a zoom built into the view matrix together
+  with the shear (`Zoom = TanRef / TanEye`). Each frame checks that the
+  viewport's top-right corner lands at NDC (1, 1); the log shows it as
+  `corner`.
+- **Bad eye pairs at start-up:** the first frames had L = R = (0, 100, 600),
+  before tracking locked on, and one second showed an eye separation of
+  16 mm. Separations outside 45-85 mm are now rebuilt around their midpoint
+  with 63 mm, logged as `IPD-REBUILT`.
+- **FastMM5's debug mode was off** in that run. The dpr now logs which
+  condition was missing: the define not compiled in (do a Build, not a
+  Compile, after options change), or the DLL not beside the exe.
+- **Measured conventions:** `cal R+ U+ F-`, so the FMX camera looks down its
+  local -Z axis; `tanRef 0.4142`; scale 0.0627 world units per mm at
+  FocusDistance 20.
 
-See "Finding crashes" in the README. Next step: the owner rebuilds the bridge
-and SRDemo (Debug), runs it until it crashes, and sends `SRDemo.log`,
-`SRDemo_FastMM.log` if it exists, and the Event Viewer entry if the log just
-stops.
-
-The drift problem below is still open; it may share a cause with the crash.
-
-## Earlier: the drift (29 October 2026, 21:30)
-
-**First run on the hardware.** SRDemo ran and *almost* worked: the weave looked right. But after about one full turn of the cube (the spin lasts 8 s), the image "splits into two and each part drifts off to a new location". The window was small, so the owner wasn't sure.
-
-The cause isn't known yet. Ideas, none confirmed:
-
-- **Eye prediction running away.** The weaver's `getPredictedEyePositions` extrapolates; if tracking stalls or the user is lost, predicted eyes could drift. That would move both the rendered views and the weave phase. The log now shows the eyes each second, `NOMINAL` when they are invalid, and `UserLost`/`UserFound` events.
-- **A stale projection matrix.** If FMX recalculates `CurrentProjectionMatrix` only lazily, the calibration in `RenderEye` (`TanRef`, the bisection in `SetVerticalTanHalf`) could read an old matrix and feed back. The log's `focal` ratio should stay at 1.0000, and `tanRef`/`scale` should stay constant.
-- **SR context loss and re-creation.** Look for `reinit n/m` and `exceptions` in the bridge line, and `ContextInvalid` events.
-- **Something tied to the animation.** The demo now has **Pause rotation**: does the drift still happen with the cube stopped?
-- **Frame pacing or latency** (the readback stalls the pipeline). The log shows fps, the worst frame, and the weaver's latency.
-
-Next step: the owner runs SRDemo maximised or full screen (F11), reproduces the problem, then uses **Copy log** and pastes it.
+Next: the owner runs the new build, checks the `corner` values and whether the
+image now holds together, and reports the smaller issues they have noticed.
 
 ## State
 
@@ -54,6 +53,10 @@ Next step: the owner runs SRDemo maximised or full screen (F11), reproduces the 
 
 The same as GDEM: Delphi 13 FMX on Windows.
 
+The stop hook's "commit and push" prompt: do not answer it with an
+explanation; the owner knows changes are left for them to apply and push. Say
+nothing more than "Noted." if a reply is needed.
+
 The compiled bridge is committed in `dll/SRFmxBridge.dll`. Building the bridge
 with CMake overwrites that file (a post-build step in `bridge/CMakeLists.txt`),
 and SRDemo's post-build step copies it next to the exe. Whenever a delivery
@@ -65,10 +68,13 @@ changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supp
 - The C context handle (`newSRContext`) is passed to `CreateDX11Weaver` as `SR::SRContext*`. This isn't documented, but it matches how the C API wraps every other object.
 - The bridge owns a child window over the viewport (`WM_NCHITTEST` returns `HTTRANSPARENT`, so the mouse reaches FMX), plus its own D3D11 device and flip-model swap chain. Views are uploaded through typeless textures with sRGB views, and the render target view on the back buffer is sRGB too, so the weaver does no sRGB conversion in its shader.
 - `TSRStereoRenderer` renders the viewport's 3D children into the viewport's own `TContext3D` (`RenderInternal`), once per eye. It sets the lights itself from `IViewport3D.Lights`, and reads each eye back with `CopyToBits` into one side-by-side buffer.
-- The off-axis projection is a view-space shear passed through `SetCameraMatrix` (FMX uses the inverse as the view). The angle of view is found by measuring `CurrentProjectionMatrix.m22`, so FMX's angle convention doesn't matter. The axis signs are measured against the reference camera every frame.
+- The off-axis projection is a view-space shear and zoom passed through `SetCameraMatrix` (FMX uses the inverse as the view). FMX's projection is left at the reference camera's angle: `SetCameraAngleOfView` does not change `CurrentProjectionMatrix`. The axis signs are measured against the reference camera every frame, and the viewport corner is checked against NDC (1, 1).
 - The eye frame is millimetres from the display centre, x right, y up, z towards the viewer. The window rectangle in mm comes from the child window's screen rectangle, the monitor it is on, and the SR display's physical size.
 
 ## Lessons learned
+
+- `TContext3D.SetCameraAngleOfView` does not change `CurrentProjectionMatrix`, so a field of view cannot be set through it. Build the field of view into the camera matrix instead (a zoom in view space).
+- The SR weaver reports both eyes at one point (0, 100, 600) before the tracker locks on.
 
 - The SDK's `sr/management/srcontext.h` includes OpenCV through the network headers. Don't include it in the bridge; the stub in `bridge/sr_stub` stands in.
 - In Delphi 13, `TContext3D.Width` and `Height` are `Single`.
