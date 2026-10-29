@@ -25,7 +25,7 @@ uses
   Winapi.Windows,
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   System.Math.Vectors, System.Diagnostics, FMX.Types, FMX.Types3D, FMX.Controls3D,
-  FMX.Viewport3D, FMX.Forms, SRFmxBridge.Api;
+  FMX.Viewport3D, FMX.Forms, FMX.Graphics, SRFmxBridge.Api;
 
 type
   { How @link(TSRStereoRenderer) drives its frames. }
@@ -147,6 +147,18 @@ type
     { Whether the last frame's eyes were too close together or too far apart
       and were rebuilt around their midpoint. }
     FIpdRepaired: Boolean;
+    { See @link(TSRStereoRenderer.EyeSeparationMM). }
+    FEyeSeparationMM: Single;
+    { Side-by-side test image shown instead of the scene, nil for the scene. }
+    FStereoImage: TBitmap;
+    { File the test image came from. }
+    FStereoImageFile: string;
+    { Whether the test image still has to be copied into the buffer. }
+    FStereoImageDirty: Boolean;
+    { Pixel format of the test image's pixels, as an @code(SRB_FMT_...) value. }
+    FStereoImageFormat: Integer;
+    { Viewport size in pixels the test image was last fitted to. }
+    FStereoImageFitSize: TSize;
     { What the left eye's render measured. }
     FCalLeft: TSREyeCalibration;
     { What the right eye's render measured. }
@@ -254,6 +266,15 @@ type
       @link(TSRStereoRenderer.TraceFrames) frames remain to be traced.
       @param(Stage what is about to happen or just happened) }
     procedure TraceStage(const Stage: string);
+    { Copies the test image into the side-by-side buffer, letterboxed or
+      pillarboxed in black so each eye's view has the viewport's shape and the
+      picture keeps its own.
+      @param(ViewportW the viewport's width in pixels)
+      @param(ViewportH the viewport's height in pixels)
+      @param(W receives the width of one eye's view)
+      @param(H receives the height)
+      @param(Pitch receives the bytes per row) }
+    procedure CopyStereoImage(ViewportW, ViewportH: Integer; out W, H, Pitch: Integer);
     { Logs the display and window details once after starting. }
     procedure LogStartDetails;
     { Logs one summary line when @link(TSRStereoRenderer.LogInterval) has
@@ -268,6 +289,8 @@ type
     { @returns(whether @link(TSRStereoRenderer.InitTimeout) differs from the
       default) }
     function StoreInitTimeout: Boolean;
+    { @returns(whether @link(TSRStereoRenderer.EyeSeparationMM) is set) }
+    function StoreEyeSeparationMM: Boolean;
   protected
     { Starts after loading if @link(TSRStereoRenderer.Active) was set. }
     procedure Loaded; override;
@@ -290,6 +313,13 @@ type
     procedure Stop;
     { Renders, weaves and presents one stereo frame. }
     procedure RenderFrame;
+    { Shows a side-by-side stereo image (left view in the left half) instead
+      of the scene, woven exactly as given: a test of the weaving on its own,
+      independent of the 3D rendering. An empty name goes back to the scene.
+      @param(FileName the image file, PNG or JPEG)
+      @raises(Exception if the file cannot be read, or is not twice as wide
+        as it is high or wider) }
+    procedure ShowStereoImage(const FileName: string);
     { The SR display's properties.
       @param(Info receives them)
       @returns(@true while running) }
@@ -305,6 +335,8 @@ type
     property RightEyeMM: TPoint3D read FRightEyeMM;
     { The last error. }
     property LastError: string read FLastError;
+    { The stereo image being shown, empty while the scene is shown. }
+    property StereoImageFile: string read FStereoImageFile;
   published
     { The viewport to show in 3D. }
     property Viewport: TViewport3D read FViewport write SetViewport;
@@ -319,6 +351,12 @@ type
     { 1 is physically correct stereo; less is gentler, more exaggerates. }
     property EyeSeparationScale: Single read FEyeSeparationScale write FEyeSeparationScale
       stored StoreEyeSeparationScale;
+    { Eye separation in millimetres to use instead of the tracker's, keeping
+      the tracked midpoint and direction; 0 uses the tracked eyes as they are.
+      Set it to the separation configured in the SR software (63 mm, say) if
+      the tracker's reading wanders. }
+    property EyeSeparationMM: Single read FEyeSeparationMM write FEyeSeparationMM
+      stored StoreEyeSeparationMM;
     { Seconds to wait for the SR service and display when starting. }
     property InitTimeout: Double read FInitTimeout write FInitTimeout stored StoreInitTimeout;
     { Whether presenting waits for the vertical blank. }
@@ -417,6 +455,7 @@ destructor TSRStereoRenderer.Destroy;
 begin
   Stop;
   FTimer.Free;
+  FStereoImage.Free;
   inherited;
 end;
 
@@ -428,6 +467,92 @@ end;
 function TSRStereoRenderer.StoreEyeSeparationScale: Boolean;
 begin
   Result := not SameValue(FEyeSeparationScale, DefaultEyeScale);
+end;
+
+function TSRStereoRenderer.StoreEyeSeparationMM: Boolean;
+begin
+  Result := FEyeSeparationMM <> 0;
+end;
+
+procedure TSRStereoRenderer.ShowStereoImage(const FileName: string);
+var
+  Bmp: TBitmap;
+begin
+  if FileName = '' then
+  begin
+    FreeAndNil(FStereoImage);
+    FStereoImageFile := '';
+    Log('Showing the 3D scene');
+    Exit;
+  end;
+  Bmp := TBitmap.CreateFromFile(FileName);
+  try
+    if Bmp.Width < 2 * Bmp.Height then
+      raise Exception.CreateFmt('%s is %d x %d: a side-by-side image must be at least twice ' +
+        'as wide as it is high', [ExtractFileName(FileName), Bmp.Width, Bmp.Height]);
+  except
+    Bmp.Free;
+    raise;
+  end;
+  FStereoImage.Free;
+  FStereoImage := Bmp;
+  FStereoImageFile := FileName;
+  FStereoImageDirty := True;
+  Log(Format('Showing stereo image %s, %d x %d (each eye %d x %d)',
+    [ExtractFileName(FileName), Bmp.Width, Bmp.Height, Bmp.Width div 2, Bmp.Height]));
+end;
+
+procedure TSRStereoRenderer.CopyStereoImage(ViewportW, ViewportH: Integer; out W, H, Pitch: Integer);
+var
+  Data: TBitmapData;
+  SrcW, SrcH, OffX, OffY, Y: Integer;
+  Aspect: Double;
+  Src: PByte;
+begin
+  // Each eye's picture keeps its shape: the view gets the viewport's shape,
+  // with black bars either side or above and below. The weaver stretches the
+  // view to the viewport, so the picture ends up undistorted.
+  SrcW := FStereoImage.Width div 2;
+  SrcH := FStereoImage.Height;
+  Aspect := ViewportW / Max(1, ViewportH);
+  if SrcW / SrcH < Aspect then
+  begin
+    W := Round(SrcH * Aspect);
+    H := SrcH;
+  end
+  else
+  begin
+    W := SrcW;
+    H := Round(SrcW / Aspect);
+  end;
+  Pitch := W * 2 * 4;
+  if not FStereoImageDirty and (Length(FBuffer) = Pitch * H) and
+    (FStereoImageFitSize.cx = ViewportW) and (FStereoImageFitSize.cy = ViewportH) then
+    Exit;
+  OffX := (W - SrcW) div 2;
+  OffY := (H - SrcH) div 2;
+  SetLength(FBuffer, Pitch * H);
+  FillChar(FBuffer[0], Length(FBuffer), 0);
+  if FStereoImage.Map(TMapAccess.Read, Data) then
+  try
+    if Data.PixelFormat = TPixelFormat.RGBA then
+      FStereoImageFormat := SRB_FMT_RGBA8
+    else
+      FStereoImageFormat := SRB_FMT_BGRA8;
+    for Y := 0 to SrcH - 1 do
+    begin
+      Src := Data.GetScanline(Y);
+      // left half of the image into the left view, right half into the right
+      System.Move(Src^, FBuffer[(Y + OffY) * Pitch + OffX * 4], SrcW * 4);
+      System.Move((Src + SrcW * 4)^, FBuffer[(Y + OffY) * Pitch + (W + OffX) * 4], SrcW * 4);
+    end;
+  finally
+    FStereoImage.Unmap(Data);
+  end;
+  FStereoImageFitSize := TSize.Create(ViewportW, ViewportH);
+  FStereoImageDirty := False;
+  Log(Format('Stereo image fitted: %d x %d per eye in a %d x %d view (viewport %d x %d), format %d',
+    [SrcW, SrcH, W, H, ViewportW, ViewportH, FStereoImageFormat]));
 end;
 
 function TSRStereoRenderer.StoreInitTimeout: Boolean;
@@ -702,8 +827,9 @@ begin
   if srb_GetWindowRectMM(Cx, Cy, W, H) = SRB_OK then
     Log(Format('Viewport on display: centre (%.1f, %.1f) mm, %.1f x %.1f mm',
       [Cx, Cy, W, H]));
-  Log(Format('FocusDistance %.2f, EyeSeparationScale %.2f, VSync %s, loop %d',
-    [FFocusDistance, FEyeSeparationScale, BoolToStr(FVSync, True), Ord(FLoopMode)]));
+  Log(Format('FocusDistance %.2f, EyeSeparationScale %.2f, EyeSeparationMM %.1f (0 = tracked), ' +
+    'VSync %s, loop %d', [FFocusDistance, FEyeSeparationScale, FEyeSeparationMM,
+    BoolToStr(FVSync, True), Ord(FLoopMode)]));
 end;
 
 procedure TSRStereoRenderer.LogPeriodic;
@@ -723,6 +849,8 @@ begin
     Exit;
   Secs := (NowMs - FLastLogMs) / 1000;
   Ipd := FLeftEyeMM.Distance(FRightEyeMM);
+  if FStereoImage <> nil then
+    Log('  showing stereo image ' + ExtractFileName(FStereoImageFile));
   Log(Format('%.1f fps (worst %.0f ms) | woven %d 2D %d hidden %d | eyes L%s R%s ipd %.1f%s | ' +
     'cam %s%s',
     [FFramesSinceLog / Secs, FWorstFrameMs, FResultCounts[0], FResultCounts[1],
@@ -782,7 +910,7 @@ var
   VP: IViewport3D;
   Cam: TCamera;
   L, R: TSRBVec3;
-  EL, ER, Mid: TPoint3D;
+  EL, ER, Mid, Dir: TPoint3D;
   Cx, Cy, Wmm, Hmm, NowMs: Double;
   W, H, Pitch, Fmt, RC: Integer;
   Form: TCommonCustomForm;
@@ -860,6 +988,13 @@ begin
         ER := Mid + Point3D(NominalIpdMM * 0.5, 0, 0);
         TraceStage('eye separation out of range; rebuilt around the midpoint');
       end;
+      if FEyeSeparationMM > 0 then
+      begin
+        Mid := (EL + ER) * 0.5;
+        Dir := (ER - EL).Normalize;
+        EL := Mid - Dir * (FEyeSeparationMM * 0.5);
+        ER := Mid + Dir * (FEyeSeparationMM * 0.5);
+      end;
       if not SameValue(FEyeSeparationScale, 1.0) then
       begin
         Mid := (EL + ER) * 0.5;
@@ -880,25 +1015,36 @@ begin
       FRefCameraPos := Point3D(Cam.AbsolutePosition.X, Cam.AbsolutePosition.Y,
         Cam.AbsolutePosition.Z);
 
-      Pitch := W * 2 * 4;
-      if Length(FBuffer) <> Pitch * H then
-        SetLength(FBuffer, Pitch * H);
-      if not (dsRender in FDiagnosticSkip) then
+      if FStereoImage <> nil then
       begin
-        TraceStage(Format('rendering left eye into %d-byte buffer, pitch %d', [Length(FBuffer), Pitch]));
-        RenderEye(Ctx, Cam, EL, @FBuffer[0], Pitch, FCalLeft);
-        TraceStage('rendering right eye');
-        RenderEye(Ctx, Cam, ER, @FBuffer[W * 4], Pitch, FCalRight);
-        TraceStage('both eyes copied');
-        // Put the normal camera back so picking (ObjectAtPoint, Pick) works
-        Ctx.SetCameraMatrix(Cam.CameraMatrix);
-        Ctx.SetCameraAngleOfView(Cam.AngleOfView);
-      end;
-
-      if Ctx.PixelFormat = TPixelFormat.RGBA then
-        Fmt := SRB_FMT_RGBA8
+        // Test image: weave it exactly as given, no 3D rendering
+        CopyStereoImage(Round(Ctx.Width), Round(Ctx.Height), W, H, Pitch);
+        Fmt := FStereoImageFormat;
+      end
       else
-        Fmt := SRB_FMT_BGRA8;
+      begin
+        Pitch := W * 2 * 4;
+        if Length(FBuffer) <> Pitch * H then
+          SetLength(FBuffer, Pitch * H);
+        if not (dsRender in FDiagnosticSkip) then
+        begin
+          TraceStage(Format('rendering left eye into %d-byte buffer, pitch %d', [Length(FBuffer), Pitch]));
+          RenderEye(Ctx, Cam, EL, @FBuffer[0], Pitch, FCalLeft);
+          TraceStage('rendering right eye');
+          RenderEye(Ctx, Cam, ER, @FBuffer[W * 4], Pitch, FCalRight);
+          TraceStage('both eyes copied');
+          // Put the normal camera back so picking (ObjectAtPoint, Pick) works
+          Ctx.SetCameraMatrix(Cam.CameraMatrix);
+          Ctx.SetCameraAngleOfView(Cam.AngleOfView);
+        end;
+
+        if Ctx.PixelFormat = TPixelFormat.RGBA then
+          Fmt := SRB_FMT_RGBA8
+        else
+          Fmt := SRB_FMT_BGRA8;
+        // The scene overwrote the buffer: a test image must be copied again
+        FStereoImageDirty := True;
+      end;
       if dsSubmit in FDiagnosticSkip then
         RC := SRB_S_2D_FALLBACK
       else

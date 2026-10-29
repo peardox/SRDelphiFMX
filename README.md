@@ -123,6 +123,7 @@ A Debug build of SRDemo writes these files beside the exe:
 | File | Contents |
 |---|---|
 | `SRDemo.log` | Everything SRDemo logs, written line by line so it survives a crash: the renderer's log; the bridge's own steps (prefixed `[bridge tNNNN]` with the thread id), including SR system events as they arrive on SR's threads; `FIRST CHANCE` lines for serious hardware exceptions (access violation, stack overflow, heap corruption...) with the module and offset where they happened; `UNHANDLED` for the exception that ended the program; and `FATAL` lines from the bridge for `abort()`, `std::terminate`, pure virtual calls and CRT invalid parameters. A run that ended normally finishes with `Log closed normally`. |
+| `oldlogs\` | Earlier runs' `SRDemo.log` and `SRDemo_FastMM.log`, named with the time they were last written; the newest 20 of each are kept |
 | `SRDemo_FastMM.log` | FastMM5's reports: corrupted, double-freed or freed-then-used blocks of Delphi memory, with stack traces of where each block was allocated and freed, and leaks at exit. Present only if FastMM found something. |
 
 How the pieces help:
@@ -130,6 +131,7 @@ How the pieces help:
 - **FastMM5 runs in full debug mode in Debug builds.** The project defines `FastMM_FullDebugModeWhenDLLAvailable`, and the build copies `FastMM_FullDebugMode64.dll` from the submodule next to the exe. The map file is Detailed, so stack traces show units and lines. SRDemo also scans every debug block for corruption every 30 frames, so damage is caught close to when it happens. FastMM5 covers only Delphi's memory, not the bridge's or SR's C++ heaps.
 - **Stage tracing.** The renderer traces its first 5 frames stage by stage (`TraceFrames`), so the last line before a crash shows the stage it died in.
 - **Skip switches.** The **Diagnostics** row in SRDemo skips eye tracking, rendering or weaving, to find which stage is at fault without rebuilding.
+- **Stereo images.** **Show:** in the same row weaves one of the side-by-side images from `media/` (left view in the left half) exactly as given, testing the weaving apart from the 3D rendering. **Fixed 63 mm eye separation** (on by default in SRDemo) uses 63 mm, keeping the tracked head position, instead of the tracker's measured separation. Images are letterboxed or pillarboxed in black to keep their shape.
 - **When the log simply stops**, with no `FIRST CHANCE`, `UNHANDLED` or `FATAL` line, the program ended in a way no handler sees (a fail-fast). Windows still records it: *Event Viewer > Windows Logs > Application*, as an "Application Error" naming the faulting module, exception code and offset. With `tools/enable_crashdumps.reg` imported, Windows also keeps a full dump in `%LOCALAPPDATA%\CrashDumps`.
 
 ## Constraints of this version
@@ -137,6 +139,7 @@ How the pieces help:
 - 2D controls must not overlap the viewport. The woven image is a native child window above the FMX surface. Mouse input passes through to FMX, but FMX controls drawn over that area are hidden.
 - One GPU-to-CPU-to-GPU copy per frame. `CopyToBits` reads each eye back and the bridge uploads it again. A zero-copy path is possible later: render into a DXGI-shared texture on FMX's DX11 device and open it in the bridge.
 - One SR viewport per process.
+- The lens covers the whole panel. While it is on, everything outside the woven viewport (other windows, the desktop, the program's own 2D controls) is seen through it unwoven, and looks blurred. That's the hardware, not the program; the SDK's own windowed samples behave the same way. A full-screen viewport avoids it.
 - Starting blocks for up to `InitTimeout` seconds (default 5) while it waits for the SR service.
 - After an SR context loss (a service restart), the bridge shows the left view in 2D and retries every 3 seconds.
 - Every bridge export masks floating-point exceptions while it runs and catches C++ exceptions, so neither reaches Delphi.

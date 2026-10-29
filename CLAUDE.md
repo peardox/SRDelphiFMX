@@ -2,7 +2,61 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (29 October 2026, 22:15)
+## Where to pick up (29 October 2026, 22:40)
+
+**The weaving is proven (22:20 run).** Media images woven as given, with no 3D
+rendering: Avatar01/02 and beer.jpg are "extremely good stereo" (the owner).
+fry.jpg (made with Immersity's AI tool) has some depth; keep it as a test.
+dice.jpg (a Blender attempt) is poor and the owner may delete it. So the
+bridge, the weaver and the window placement are right, and any fault left in
+the 3D scene is in the rendering or the scene itself.
+
+- **The drift** is very likely motion parallax and not a fault. The demo
+  scene goes about 13 cm behind the glass (the back wall) and 10 cm in front
+  (the nearest sphere) at 83 cm viewing distance; that is a lot for a 27-inch
+  panel, so things move a long way with the head. There is also one jump at
+  start-up, from the nominal viewer to the tracked one (the tracker reports
+  L = R = (0, 100, 600) until it locks on). Offered, not yet chosen: a
+  stereo-only mode (fixed head position, real eye separation), smoothing, and
+  a shallower demo scene.
+- **63 mm fixed separation "definitely helps"**, so it is now on by default in
+  SRDemo. The tracker reads the owner at 67-75 mm, against 63 mm set in the
+  Samsung hub app.
+- **The areas outside the viewport look blurred:** the lens covers the whole
+  panel. That is hardware; noted in the README.
+- **Delivered:** letterboxing for images (they were stretched to the
+  viewport), and log rotation into `oldlogs\` (20 kept per name; FastMM's log
+  too). Owner's request: clean or rotate the logs between runs.
+- **FastMM5 full debug mode is ON now** (the post-build fix worked), and the
+  run had no corruption.
+
+## Earlier (22:30)
+
+**Second log (22:04): the projection is now right, but the drift is still
+there.** `corner` was (1.0000, 1.0000) for both eyes in every frame, and the
+zoom ran 1.88 to 2.64. The eyes were steady: about L(-185, -38, 825) and
+R(-115, -33, 835). The tracker's eye separation read 61-74 mm, against 63 mm
+set in the owner's Samsung hub app. So the remaining fault is either in the
+weaving (the bridge, the SR weaver, window placement) or in something about
+the 3D content.
+
+Delivered to tell which:
+
+- **Show: (media image).** SRDemo can weave one of the side-by-side images
+  from `media/` exactly as given, with no 3D rendering
+  (`TSRStereoRenderer.ShowStereoImage`). If an image also drifts, the fault is
+  in the weaving. If images are steady and only the scene drifts, it is in the
+  rendering.
+- **Fixed 63 mm eye separation** (`EyeSeparationMM`), to rule out the
+  tracker's wandering separation.
+- **Post-build copy fixed.** The IDE had joined the two copies with `&&`
+  after `if ... else (...)`, so the FastMM DLL copy only ran when the bridge
+  copy failed. Each copy is now a parenthesised `(copy ... || echo warning)`.
+
+Waiting on: the owner's answers to whether a still head drifts, whether the
+media images drift, and what exactly "splits and drifts" looks like.
+
+## Earlier (22:15)
 
 **First full log from the hardware (21:51), Debug build, maximised on a
 3840 x 2160, 596.7 x 335.7 mm panel; SR platform 1.36.4.35453.**
@@ -72,6 +126,8 @@ changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supp
 - The eye frame is millimetres from the display centre, x right, y up, z towards the viewer. The window rectangle in mm comes from the child window's screen rectangle, the monitor it is on, and the SR display's physical size.
 
 ## Lessons learned
+
+- The IDE rewrites a multi-line post-build event into one line joined with `&&`. An `if exist ... (...) else (...)` followed by `&&` makes the next command part of the `else` branch. Write each step as a parenthesised `(command || echo warning)` instead.
 
 - `TContext3D.SetCameraAngleOfView` does not change `CurrentProjectionMatrix`, so a field of view cannot be set through it. Build the field of view into the camera matrix instead (a zoom in view space).
 - The SR weaver reports both eyes at one point (0, 100, 600) before the tracker locks on.

@@ -50,8 +50,8 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <Manifest_File>$(BDS)\bin\default_app.manifest</Manifest_File>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <PostBuildEvent><![CDATA[if exist "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" (copy /Y "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" "$(OUTPUTDIR)") else (echo warning: dll\SRFmxBridge.dll not found - build the bridge first, see README)
-if exist "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" (copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)") else (echo warning: FastMM5 submodule missing - run git submodule update --init)
+        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)
+(copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)" || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)
 $(PostBuildEvent)]]></PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
@@ -121,7 +121,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if exist &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; (copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot;) else (echo warning: dll\SRFmxBridge.dll not found - build the bridge first, see README)&amp;&amp;if exist &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; (copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot;) else (echo warning: FastMM5 submodule missing - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
@@ -129,7 +129,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>if exist &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; (copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot;) else (echo warning: dll\SRFmxBridge.dll not found - build the bridge first, see README)&amp;&amp;if exist &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; (copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot;) else (echo warning: FastMM5 submodule missing - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

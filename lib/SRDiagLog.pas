@@ -17,9 +17,22 @@ unit SRDiagLog;
 
 interface
 
-{ Opens (and empties) the log file and writes a header line.
+{ Opens a new, empty log file and writes a header line. A log left by an
+  earlier run is first moved to @link(DiagLogArchive)'s folder.
   @param(FileName full path of the file) }
 procedure DiagLogOpen(const FileName: string);
+
+{ Moves a log file left by an earlier run into an @code(oldlogs) folder
+  beside it, named with the time it was last written (for example
+  @code(oldlogs\SRDemo_20261029_222023.log)), and deletes all but the newest
+  @link(OldLogsKept) logs of the same name there. Does nothing if the file
+  does not exist.
+  @param(FileName full path of the log file) }
+procedure DiagLogArchive(const FileName: string);
+
+const
+  { How many old logs of each name @link(DiagLogArchive) keeps. }
+  OldLogsKept = 20;
 
 { Writes one line, with the time and thread id. Safe from any thread; does
   nothing before @link(DiagLogOpen).
@@ -44,7 +57,8 @@ function DiagLogAttachBridge: Boolean;
 implementation
 
 uses
-  Winapi.Windows, System.SysUtils, System.Classes, System.SyncObjs, SRFmxBridge.Api;
+  Winapi.Windows, System.SysUtils, System.Classes, System.SyncObjs, System.IOUtils,
+  SRFmxBridge.Api;
 
 type
   { The Win64 @code(EXCEPTION_RECORD), declared here so it cannot be confused
@@ -157,9 +171,53 @@ begin
   end;
 end;
 
+procedure DiagLogArchive(const FileName: string);
+var
+  Folder, Stem, Ext, Target: string;
+  Old: TStringList;
+  F: TSearchRec;
+begin
+  if not FileExists(FileName) then
+    Exit;
+  Folder := IncludeTrailingPathDelimiter(ExtractFilePath(FileName)) + 'oldlogs';
+  Stem := ChangeFileExt(ExtractFileName(FileName), '');
+  Ext := ExtractFileExt(FileName);
+  try
+    ForceDirectories(Folder);
+    Target := IncludeTrailingPathDelimiter(Folder) + Stem + '_' +
+      FormatDateTime('yyyymmdd_hhnnss', TFile.GetLastWriteTime(FileName)) + Ext;
+    if FileExists(Target) then
+      System.SysUtils.DeleteFile(Target);
+    TFile.Move(FileName, Target);
+    // Keep the newest OldLogsKept; the names sort by time
+    Old := TStringList.Create;
+    try
+      if FindFirst(IncludeTrailingPathDelimiter(Folder) + Stem + '_*' + Ext, faAnyFile, F) = 0 then
+      try
+        repeat
+          Old.Add(F.Name);
+        until FindNext(F) <> 0;
+      finally
+        FindClose(F);
+      end;
+      Old.Sort;
+      while Old.Count > OldLogsKept do
+      begin
+        System.SysUtils.DeleteFile(IncludeTrailingPathDelimiter(Folder) + Old[0]);
+        Old.Delete(0);
+      end;
+    finally
+      Old.Free;
+    end;
+  except
+    // An old log that cannot be moved is simply overwritten
+  end;
+end;
+
 procedure DiagLogOpen(const FileName: string);
 begin
   DiagLogClose;
+  DiagLogArchive(FileName);
   LogName := FileName;
   LogStream := TFileStream.Create(FileName, fmCreate or fmShareDenyNone);
   DiagLog(Format('Log opened: %s, process %d', [ParamStr(0), GetCurrentProcessId]));

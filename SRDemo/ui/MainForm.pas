@@ -14,6 +14,7 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, FMX.Graphics, FMX.StdCtrls, FMX.Layouts,
   FMX.Memo, FMX.Memo.Types, FMX.ScrollBox, FMX.Types3D, FMX.Controls3D, FMX.Objects3D,
   FMX.MaterialSources, FMX.Viewport3D, FMX.Ani, FMX.Platform, FMX.Controls.Presentation,
+  FMX.ListBox,
   FMX.SRStereoViewport;
 
 type
@@ -61,6 +62,12 @@ type
     FSkipSubmit: TCheckBox;
     { Frames drawn, for the periodic FastMM5 scan. }
     FFrames: Integer;
+    { Chooses the 3D scene or one of the stereo images in the media folder. }
+    FShow: TComboBox;
+    { Uses a fixed 63 mm eye separation instead of the tracker's. }
+    FFixedIpd: TCheckBox;
+    { The repository's media folder, empty if not found. }
+    FMediaFolder: string;
     { Builds the 3D scene. }
     procedure BuildScene;
     { Builds the toolbar and the log. }
@@ -84,6 +91,14 @@ type
     { Sets the eye separation scale.
       @param(Sender the track bar) }
     procedure DepthChange(Sender: TObject);
+    { Finds the media folder and lists its images in @link(FShow). }
+    procedure ListMedia;
+    { Shows the 3D scene or the chosen stereo image.
+      @param(Sender the combo box) }
+    procedure ShowChange(Sender: TObject);
+    { Turns the fixed eye separation on or off.
+      @param(Sender the checkbox) }
+    procedure FixedIpdChange(Sender: TObject);
     { Applies the diagnostic skip checkboxes to the renderer.
       @param(Sender a checkbox) }
     procedure SkipChange(Sender: TObject);
@@ -257,6 +272,28 @@ begin
   FSkipSubmit.Text := 'Skip weaving (bridge)';
   FSkipSubmit.OnChange := SkipChange;
 
+  FFixedIpd := TCheckBox.Create(Self);
+  FFixedIpd.Parent := Bar;
+  FFixedIpd.Align := TAlignLayout.Left;
+  FFixedIpd.Width := 200;
+  FFixedIpd.Text := 'Fixed 63 mm eye separation';
+  FFixedIpd.OnChange := FixedIpdChange;
+
+  Lbl := TLabel.Create(Self);
+  Lbl.Parent := Bar;
+  Lbl.Align := TAlignLayout.Left;
+  Lbl.Width := 45;
+  Lbl.Margins.Left := 12;
+  Lbl.Text := 'Show:';
+
+  FShow := TComboBox.Create(Self);
+  FShow.Parent := Bar;
+  FShow.Align := TAlignLayout.Left;
+  FShow.Width := 220;
+  FShow.Items.Add('3D scene');
+  FShow.ItemIndex := 0;
+  FShow.OnChange := ShowChange;
+
   Bar := TLayout.Create(Self);
   Bar.Parent := Self;
   Bar.Position.Y := 0;
@@ -344,6 +381,10 @@ begin
   else
     AddLog('FastMM5 full debug mode off');
   DiagLogAttachBridge;
+  ListMedia;
+  // 63 mm is what the owner's SR software is set to, and it looks better than
+  // the tracker's measured separation (which wanders between 61 and 75 mm)
+  FFixedIpd.IsChecked := True;
   FStereo.Active := True;   // completes once the form is shown
 end;
 
@@ -407,6 +448,66 @@ end;
 procedure TfrmMain.DepthChange(Sender: TObject);
 begin
   FStereo.EyeSeparationScale := FDepth.Value;
+end;
+
+procedure TfrmMain.ListMedia;
+var
+  Dir, Candidate: string;
+  I: Integer;
+  F: TSearchRec;
+begin
+  // The exe is in SRDemo\Win64\Debug; look upwards for the repository's media
+  Dir := ExtractFilePath(ParamStr(0));
+  for I := 1 to 5 do
+  begin
+    Candidate := IncludeTrailingPathDelimiter(Dir) + 'media';
+    if DirectoryExists(Candidate) then
+    begin
+      FMediaFolder := IncludeTrailingPathDelimiter(Candidate);
+      Break;
+    end;
+    Dir := ExtractFileDir(ExcludeTrailingPathDelimiter(Dir));
+  end;
+  if FMediaFolder = '' then
+  begin
+    AddLog('No media folder found above ' + ExtractFilePath(ParamStr(0)));
+    Exit;
+  end;
+  if FindFirst(FMediaFolder + '*.*', faAnyFile, F) = 0 then
+  try
+    repeat
+      if SameText(ExtractFileExt(F.Name), '.png') or SameText(ExtractFileExt(F.Name), '.jpg') or
+        SameText(ExtractFileExt(F.Name), '.jpeg') then
+        FShow.Items.Add(F.Name);
+    until FindNext(F) <> 0;
+  finally
+    FindClose(F);
+  end;
+  AddLog(Format('%d stereo images in %s', [FShow.Items.Count - 1, FMediaFolder]));
+end;
+
+procedure TfrmMain.ShowChange(Sender: TObject);
+begin
+  try
+    if FShow.ItemIndex <= 0 then
+      FStereo.ShowStereoImage('')
+    else
+      FStereo.ShowStereoImage(FMediaFolder + FShow.Items[FShow.ItemIndex]);
+  except
+    on E: Exception do
+      AddLog('Cannot show ' + FShow.Items[FShow.ItemIndex] + ': ' + E.Message);
+  end;
+end;
+
+procedure TfrmMain.FixedIpdChange(Sender: TObject);
+const
+  State: array[Boolean] of string = ('as tracked', 'fixed 63 mm');
+begin
+  if FFixedIpd.IsChecked then
+    FStereo.EyeSeparationMM := 63
+  else
+    FStereo.EyeSeparationMM := 0;
+  AddLog('Eye separation: ' + State[FFixedIpd.IsChecked]);
 end;
 
 procedure TfrmMain.SkipChange(Sender: TObject);
