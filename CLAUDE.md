@@ -2,7 +2,86 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (29 October 2026, 23:55)
+## Where to pick up (30 October 2026, 02:10, end of session)
+
+### What works (owner, on the hardware)
+
+- 3D in a normal (maximised) window: correct off-axis projection (`corner`
+  (1, 1)), look-around ("the model balls + cube all move properly"), no
+  drift. The FMX view-matrix finding (23:40 below) was the fix.
+- Opens on the SR display; moves there if started elsewhere.
+- Lens off over the controls (SR's lens hint works while weaving), wait for
+  the eyes before 3D (flat until then), off-display detection.
+- F11 and Esc via the thread keyboard hook; full screen without the taskbar,
+  held at the SR display rectangle against FMX's re-sizing.
+- Stereo test images (`media/`) in a window.
+
+### The one open fault: full screen goes wrong after a few seconds
+
+Symptom: full screen is right for a second or so, then each eye gets one
+half of the *left* view stretched to full width (green sphere and cube at
+both edges in a screen grab). Coming out of full screen makes it right
+again. A 3441 x 1440 or 3840 x 1700 window on the same display never breaks.
+
+Ruled out, each by a test on the hardware:
+
+| Idea | Test | Result |
+|---|---|---|
+| FMX re-creating the window, weaver made mid-resize | own borderless full screen, no re-creation, no SR restart | still breaks |
+| lens switching | lens kept on in full screen; 00:50 run had one lens event | still breaks |
+| views exactly the display's resolution | one row trimmed (3840 x 2159) | still breaks |
+| window at x = -1 (FMX rounding) | window held at exactly (0, 0) 3840 x 2160 | still breaks |
+| Windows treating it as full screen | "Plain full screen": one row short, not marked | still breaks |
+| flip-model independent flip | bitblt `DISCARD` swap chain, as Leia's samples | still breaks |
+| integrated GPU | Windows Graphics setting: High performance | still breaks, same fps |
+| low frame rate | `beer.jpg` in full screen at 170-300 fps; Skip rendering | still breaks |
+
+So it is not FMX's rendering, the frame rate, the projection or the window
+manager as far as we can see: an image woven with no 3D rendering at all
+still breaks. What remains is how the bridge's weaving behaves when its
+window covers the display, against what Leia's own samples do.
+
+### Next steps, in order
+
+1. **Run Leia's DX11 sample from the 1.36.2 SDK full screen on this
+   machine** (`examples/directx11_weaving`, CMake, VS 2022; starts full
+   screen, F11 toggles, default mode is a stereo image). If it also breaks
+   after a few seconds, the fault is the runtime/driver/display, not ours:
+   report to Leia. If it holds, close the gap step by step:
+2. **A new test project** (the owner's rule: any further demo is a new
+   project in the group, e.g. `SRFullScreenTest/` with `ui/`, sharing `lib/`
+   and `dll/`). Plain, no FMX 3D: a borderless full-screen window, the
+   bridge, a stereo image. Then vary one thing at a time:
+   - the weaver created on the top-level window, not the bridge's child
+     window (the samples weave into a swap chain on the top-level window);
+   - views at the recommended 1920 x 1080 (bridge: mip 1 of the
+     side-by-side texture), as the samples;
+   - the adapter (bridge already picks it the samples' way, see below).
+3. Only then port the fix into `TSRStereoRenderer`.
+
+### Delivered but not yet built or tested
+
+- `SRDelphiFMX-gpu.zip`: `bridge/SRFmxBridge.cpp` that logs every adapter
+  and its monitors, puts the device on the one with the most dedicated
+  memory (the 1.36 sample's rule), and says which adapter drives the SR
+  display. **Bridge rebuild needed.** The 02:02 log was still the bitblt
+  bridge without it.
+- The owner's laptop: RTX 5090 Mobile drives the SR display; there is also
+  an integrated GPU. SRDemo.exe is now set to High performance in Windows
+  Graphics settings (GDEM's `GPUPreferences.pas` / `GDEMGpuPreference` can
+  do this from the program).
+
+### Diagnostics left in on purpose
+
+`FullScreenPlain` / "Plain full screen (test)", `FlipModel`, the frame
+trace after each viewport resize, `Full screen held` lines. Remove the plain
+test once the fault is understood.
+
+Notes: the 02:02 log's `ipd 42.4` is the Depth slider (0.67 x 63 mm), not a
+tracking fault. The 1.36.2 SDK headers are compatible; the bridge builds
+against either SDK.
+
+## Earlier (30 October 2026, 01:15)
 
 **Display placement confirmed** (owner, 23:40): SRDemo always opens on the SR
 display.
@@ -61,7 +140,8 @@ shell. The log line gives the wanted and actual rectangles and whether the
 window is still maximised. No DirectX calls are needed: this is a borderless
 full-screen window, and a flip-model swap chain covering the monitor already
 gets the independent-flip path; DXGI exclusive full screen is the inferior
-mode.
+mode. (Later: that independent-flip path is now the prime suspect for the
+broken full screen; see the swap chain note above.)
 
 **Full screen works** (owner, 00:29). **But** (00:35): start, F11 (fine),
 back to normal, F11 again: broken exactly as in the 23:55 screenshot. No
@@ -82,21 +162,106 @@ fixed-size view texture (the SDK samples use the recommended 1920 x 1080 and
 never resize it; the weaver scales to the window). That is the render-scale
 work below, with the projection's aspect corrected for the window.
 
-**The full-screen fault (00:50-00:55).** Not the lens: in the 00:50 run
-(started full screen on the SR display) the lens came on once and never
-switched, and it was still wrong. Not the view size either: trimming one row
-off 3840 x 2160 views (tried, removed) changed nothing. Not resizing: that
-run was full size before SR started. What every broken run shares is a
-window covering the whole SR display exactly; a window one row short never
-broke, and the 00:39 run came right the moment Windows shrank the window to
-3441 x 1440. The picture (each eye given one half of the left view,
-stretched) is what you get if the SR system takes the full-screen window for
-a side-by-side picture: the SDK's `canWeave` notes say SR displays can
-weave side-by-side output themselves ("you can output side-by-side manually
-or let DX11Weaver handle this"). Delivered: `FullScreenGap` (default 1 row
-left uncovered at the bottom; 0 = exact, for testing), kept by the per-frame
-re-apply. If it works, a bridge rebuild could log `canWeave(w, h)` before
-and after going full screen, to see SR's own view of it.
+**The GPU (01:44).** The owner's machine is a laptop: an RTX 5090 Mobile
+drives the SR display, beside an integrated GPU that cannot drive it. On
+such hybrid laptops Windows starts programs on the integrated GPU unless
+told otherwise, so FMX's context and the bridge's device (both on the
+default adapter) very likely ran on the integrated GPU, with every frame
+crossing to the 5090: normal in a window (DWM copies it), a different path
+full screen. It also fits 35 fps at 4K. Plain full screen (01:44): fine for
+a moment, then broken, the picture nearer the left.
+
+First test, no rebuild: Windows Settings > System > Display > Graphics,
+SRDemo.exe, High performance. Delivered as well (**bridge rebuild**): the
+bridge logs every adapter with the monitors it drives, picks the one with
+the most dedicated memory as Leia's 1.36 sample does, logs `D3D11 device on
+...`, and after finding the SR display logs which adapter drives it and
+whether it is the bridge's. FMX cannot be told an adapter, so the Windows
+preference is the real fix; GDEM's `GDEMGpuPreference` (from Sprite3D)
+writes it (HKCU\Software\Microsoft\DirectX\UserGpuPreferences), so SRDemo
+could set itself to high performance, taking effect at the next start.
+
+**01:35 run, bitblt bridge rebuilt: still broken in full screen.** The log
+confirms the bitblt swap chain. Windowed now runs at 70-79 fps (was 60 with
+the flip model). So independent flip was not the cause either; bitblt is
+kept anyway because it matches Leia's samples. Untested so far: the "Plain
+full screen (test)" checkbox (bottom row uncovered, Windows not told). Still
+to try, in order: that test; the weaver created on the form's top-level
+window while full screen (bridge); views at the recommended 1920 x 1080
+(bridge: generate mips on the side-by-side texture and give the weaver mip 1;
+the renderer cannot render into a separate context, because
+`TControl3D.RenderInternal` draws into the viewport's own context); choosing
+the adapter as the 1.36 sample does.
+
+**SDK 1.36.2 (owner found it, 01:25) and the swap chain.** The 1.36.2
+headers differ from 1.34.5 almost only in comments, plus a new
+`SR::IDisplayManager` / `IDisplay` (`TryGetDisplayManagerInstance`, lazy
+bound), which could later replace `DisplayMirror`. The installed runtime is
+already 1.36.4, so the SDK alone changes nothing at run time; the bridge
+builds against either (the `sr_stub` still applies). What the 1.36 DX11
+sample shows that matters: its swap chain is the **bitblt model**,
+`DXGI_SWAP_EFFECT_DISCARD`, one sRGB buffer (1.34's too), and it picks the
+adapter with the most dedicated memory. Ours was the flip model. A flip-model
+swap chain covering the display can be promoted by Windows, a moment after
+it appears, to independent flip or a hardware overlay that bypasses DWM
+composition, which matches "fine for a few seconds, then wrong, with nothing
+in our log", only in full screen. Delivered (**bridge rebuild needed**): the
+bridge now uses the bitblt model by default; `srb_SetPresentModel(1)` /
+`TSRStereoRenderer.FlipModel` brings back the flip model for comparison
+(called only when needed, so the new Delphi code still runs with an older
+bridge). Not yet copied from the sample: choosing the adapter.
+
+**01:18 run: the hold works, the fault stays.** The window sat at exactly
+(0, 0) 3840 x 2160 with no further moves, and it still broke after a few
+seconds, with nothing logged at that moment. So the x = -1 offset below was
+not the cause either (the hold is kept: it is still right). Something outside
+our code reacts some seconds after the window becomes full screen. Every
+broken run either covered the display exactly or was marked full screen
+with `ITaskbarList2` (the 01:07 run was one row short but marked). Leia's
+samples are full screen too, but their weaver is created on that full-screen
+window; ours is on the bridge's child window. Theory: SR polls for a
+full-screen window and treats one that is not its weaver's window
+differently. Test delivered (no bridge rebuild): `FullScreenPlain`
+(SRDemo: "Plain full screen (test)" in the diagnostics row) leaves the
+bottom row uncovered and does not mark the window. If plain full screen
+holds, the fix is the samples' way: the weaver on the top-level window while
+full screen (bridge change: re-create the weaver on the form's HWND; in full
+screen the child covers the form's client area exactly, so the position is
+the same).
+
+**The full-screen fault: the window was one pixel onto the next monitor
+(01:07 log and video).** Every attempt to put the borderless window at the
+SR display's (0, 0) 3840 x 2160 ended at (-1, 0) or (-1, 1), 3841 wide: FMX
+re-sizes the window from its rounded logical bounds (150% scaling) after we
+place it. In that run the per-frame check put it back 207 times in 6 s and
+FMX moved it again each time. x = -1 puts one column on the monitor to the
+left. The video: full screen correct for about 3 s, then the broken picture
+(each eye one half of the left view, stretched), with nothing in the log at
+that moment; SR presumably re-reads the window position and gets a window
+spanning two monitors. The SDK samples (plain Win32, no FMX) sit exactly at
+the monitor rectangle and work.
+
+Delivered: `HoldWindowProc`, a comctl32 subclass (`SetWindowSubclass`,
+declared locally) on the form's window while full screen. On
+`WM_WINDOWPOSCHANGING` it rewrites any move or size to `FFullScreenRect`
+before it happens, counts the attempts, and the frame logs them (`Full
+screen held: n attempt(s) ... the last to (x, y) w x h`); no logging inside
+the window procedure. The one-row gap (`FullScreenGap`) and the one-row view
+trim are removed: both were wrong guesses.
+
+**Checked against the SDK samples afterwards (should have been first).**
+`examples/directx11_weaving` (and dx12, gl) start full screen by default,
+F11 toggles, and full screen is exactly Raymond Chen's method on the whole
+monitor (`MONITOR_DEFAULTTOPRIMARY`, no gap). So exact coverage works for
+Leia, which makes the gap theory doubtful. What the samples do differently:
+1. The weaver is created on the top-level window, which owns the swap chain.
+   Ours is created on the bridge's child window.
+2. The views are a fixed `getRecommendedViewsTextureWidth/Height`
+   (1920 x 1080 here), never resized; the weaver scales to the window.
+   Ours are the viewport's size (3840 x 2160 in full screen).
+If the gap does not fix it, the next steps are, in order: fixed 1920 x 1080
+views (renderer only, also restores 60 fps), then the weaver on the
+top-level window (bridge rebuild).
 
 The owner asked whether display sizes are measured at the start (Sprite3D's
 DisplayData does): the SR display's rectangle is read from SR when it
@@ -325,7 +490,7 @@ changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supp
 
 - The weaver is C++ only (`SR::CreateDX11Weaver`, `SR::IDX11Weaver1`, with virtual inheritance), hence `bridge/`, an MSVC DLL with a flat C API. The SR DLLs are loaded at run time. `CreateDX11Weaver` is found by its decorated name, or by scanning the exports.
 - The C context handle (`newSRContext`) is passed to `CreateDX11Weaver` as `SR::SRContext*`. This isn't documented, but it matches how the C API wraps every other object.
-- The bridge owns a child window over the viewport (`WM_NCHITTEST` returns `HTTRANSPARENT`, so the mouse reaches FMX), plus its own D3D11 device and flip-model swap chain. Views are uploaded through typeless textures with sRGB views, and the render target view on the back buffer is sRGB too, so the weaver does no sRGB conversion in its shader.
+- The bridge owns a child window over the viewport (`WM_NCHITTEST` returns `HTTRANSPARENT`, so the mouse reaches FMX), plus its own D3D11 device and swap chain (bitblt model since 30 October, as Leia's samples; the flip model is optional). Views are uploaded through typeless textures with sRGB views, and the render target view on the back buffer is sRGB too, so the weaver does no sRGB conversion in its shader.
 - `TSRStereoRenderer` renders the viewport's 3D children into the viewport's own `TContext3D` (`RenderInternal`), once per eye. It sets the lights itself from `IViewport3D.Lights`, and reads each eye back with `CopyToBits` into one side-by-side buffer.
 - The off-axis projection is built into the view matrix passed to `SetCameraMatrix`: `RefView * Translation(-eye) * OffAxis` (a shear plus a zoom). FMX's projection is left as it is. The axis signs are measured in view space every frame, and the viewport corner is checked against NDC (1, 1) with the shaders' own formula.
 - The eye frame is millimetres from the display centre, x right, y up, z towards the viewer. The window rectangle in mm comes from the child window's screen rectangle, the SR display's desktop rectangle (`FindSRDisplayRect`; the window's monitor only if that is unknown), and the SR display's physical size.

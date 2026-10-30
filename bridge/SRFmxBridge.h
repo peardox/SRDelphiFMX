@@ -118,6 +118,9 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
                                 int32_t pitch, int32_t pixelFormat);
 
 SRB_API void    srb_SetVSync(int32_t enabled);
+/* Swap chain model for the next srb_Initialize: 0 (default) bitblt DISCARD, as
+   Leia's samples; 1 flip model (FLIP_DISCARD), the bridge's only model before 30 October 2026. */
+SRB_API void    srb_SetPresentModel(int32_t flipModel);
 SRB_API void    srb_SetLatencyInFrames(uint64_t frames);
 SRB_API void    srb_SetLens(int32_t enabled);   /* lens on/off hint */
 

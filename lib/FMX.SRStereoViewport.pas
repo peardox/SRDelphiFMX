@@ -208,8 +208,23 @@ type
     { Whether the viewport's centre is on the SR display (@true when the
       display's position is unknown). }
     FViewportOnSR: Boolean;
-    { See @link(TSRStereoRenderer.FullScreenGap). }
-    FFullScreenGap: Integer;
+    { See @link(TSRStereoRenderer.FlipModel). }
+    FFlipModel: Boolean;
+    { Whether the bridge has been told a present model, so a change back to
+      the default is passed on too. }
+    FPresentModelSet: Boolean;
+    { See @link(TSRStereoRenderer.FullScreenPlain). }
+    FFullScreenPlain: Boolean;
+    { The rectangle the window is held to in full screen, physical pixels. }
+    FFullScreenRect: TRect;
+    { The window the full-screen hold is installed on, 0 if none. }
+    FHoldWnd: HWND;
+    { Times something (FMX) tried to move or size the full-screen window
+      since the last log line; counted in the window procedure, logged from
+      the frame. }
+    FHoldCorrections: Integer;
+    { The last rectangle something tried to give the full-screen window. }
+    FHoldAttempt: TRect;
     { Whether @link(FViewportOnSR) has been logged since starting. }
     FViewportOnSRLogged: Boolean;
     { The viewport's rectangle given to the bridge last frame, client
@@ -382,6 +397,12 @@ type
     { Makes the form's window match @link(TSRStereoRenderer.FullScreen), if
       it exists and does not already. }
     procedure ApplyFullScreen;
+    { Holds the window at @link(FFullScreenRect) from its window procedure
+      (@code(WM_WINDOWPOSCHANGING)), so FMX cannot move it.
+      @param(Wnd the form's window) }
+    procedure InstallHold(Wnd: HWND);
+    { Removes the hold installed by @link(InstallHold). }
+    procedure RemoveHold;
     { The form the viewport is on.
       @returns(the form, or nil if there is none yet) }
     function ViewportForm: TCommonCustomForm;
@@ -439,14 +460,18 @@ type
       before the form is shown and it is applied once SR starts. The
       program hides its own controls if it wants only the viewport. }
     property FullScreen: Boolean read FFullScreen write SetFullScreen;
-    { Rows of the display left uncovered at the bottom in
-      @link(TSRStereoRenderer.FullScreen) (default 1). Every time the window
-      covered the whole SR display exactly, the picture came out wrong: each
-      eye got one half of the left view, stretched to full width, as if the
-      SR system took the window for a full-screen side-by-side picture (SR
-      displays can weave side-by-side input themselves). A window one row
-      short never did. 0 covers the display exactly, for testing. }
-    property FullScreenGap: Integer read FFullScreenGap write FFullScreenGap;
+    { A test of why full screen goes wrong after a few seconds: @true leaves
+      the bottom row of the display uncovered and does not tell Windows the
+      window is full screen (so the taskbar may show), so that nothing sees
+      a full-screen window. Takes effect the next time full screen is
+      entered. Default @false. }
+    property FullScreenPlain: Boolean read FFullScreenPlain write FFullScreenPlain;
+    { @false (the default): the bridge presents with the bitblt swap chain
+      model, as Leia's samples do. @true: the flip model, which Windows may
+      scan out directly when the window covers the display (full screen
+      broke a few seconds in with it). Takes effect when SR next starts;
+      needs a bridge built on or after 30 October 2026 to be set @true. }
+    property FlipModel: Boolean read FFlipModel write FFlipModel default False;
     { Whether the lens is on now (asked to be: it takes the panel a moment
       to switch). While it is off the viewport is drawn flat. }
     property LensOn: Boolean read FLensOn;
@@ -618,7 +643,6 @@ begin
   FLensOn := True;
   FLensWantSince := -1;
   FSettleTime := 300;
-  FFullScreenGap := 1;
   FViewportOnSR := True;
   FWindowVisible := -1;
   FLeftEyeMM := Point3D(NominalLeftX, 0, NominalZ);
@@ -628,6 +652,7 @@ end;
 
 destructor TSRStereoRenderer.Destroy;
 begin
+  RemoveHold;
   Stop;
   FTimer.Free;
   FStereoImage.Free;
@@ -874,6 +899,89 @@ begin
   end;
 end;
 
+const
+  { Window message sent before a window is moved or sized. }
+  WM_WINDOWPOSCHANGING = $0046;
+  { Identifies our subclass of the form's window. }
+  HoldSubclassId = $53524653;   // 'SRFS'
+
+type
+  { Signature of a comctl32 window subclass procedure. }
+  TSubclassProc = function(Wnd: HWND; Msg: UINT; WP: WPARAM; LP: LPARAM;
+    IdSubclass: UIntPtr; RefData: UIntPtr): LRESULT; stdcall;
+
+{ comctl32's SetWindowSubclass, declared here rather than using
+  Winapi.CommCtrl. @param(Wnd the window) @param(Proc the subclass procedure)
+  @param(IdSubclass our id) @param(RefData passed to Proc)
+  @returns(@true on success) }
+function SetWindowSubclass(Wnd: HWND; Proc: TSubclassProc; IdSubclass: UIntPtr;
+  RefData: UIntPtr): BOOL; stdcall; external 'comctl32.dll';
+{ comctl32's RemoveWindowSubclass. @param(Wnd the window)
+  @param(Proc the subclass procedure) @param(IdSubclass our id)
+  @returns(@true on success) }
+function RemoveWindowSubclass(Wnd: HWND; Proc: TSubclassProc;
+  IdSubclass: UIntPtr): BOOL; stdcall; external 'comctl32.dll';
+{ comctl32's DefSubclassProc: passes a message on. @param(Wnd the window)
+  @param(Msg the message) @param(WP its wParam) @param(LP its lParam)
+  @returns(the result) }
+function DefSubclassProc(Wnd: HWND; Msg: UINT; WP: WPARAM; LP: LPARAM): LRESULT;
+  stdcall; external 'comctl32.dll';
+
+{ Window procedure in front of FMX's for a full-screen form: any move or size
+  (FMX re-sizes from its rounded logical bounds, which put the window at
+  x = -1, one pixel onto the neighbouring monitor) is changed to the
+  full-screen rectangle before it happens.
+  @param(Wnd the form's window) @param(Msg the message) @param(WP wParam)
+  @param(LP lParam) @param(IdSubclass our id)
+  @param(RefData the renderer)
+  @returns(the result of the next window procedure) }
+function HoldWindowProc(Wnd: HWND; Msg: UINT; WP: WPARAM; LP: LPARAM;
+  IdSubclass: UIntPtr; RefData: UIntPtr): LRESULT; stdcall;
+var
+  R: TSRStereoRenderer;
+  Pos: PWindowPos;
+begin
+  if Msg = WM_WINDOWPOSCHANGING then
+  begin
+    R := TSRStereoRenderer(RefData);
+    Pos := PWindowPos(LP);
+    if (R <> nil) and R.FFullScreen and not R.FFullScreenRect.IsEmpty then
+      with R.FFullScreenRect do
+        if ((Pos.flags and SWP_NOMOVE) = 0) and ((Pos.x <> Left) or (Pos.y <> Top)) or
+           ((Pos.flags and SWP_NOSIZE) = 0) and ((Pos.cx <> Width) or (Pos.cy <> Height)) then
+        begin
+          R.FHoldAttempt := TRect.Create(Pos.x, Pos.y, Pos.x + Pos.cx, Pos.y + Pos.cy);
+          Inc(R.FHoldCorrections);
+          Pos.x := Left;
+          Pos.y := Top;
+          Pos.cx := Width;
+          Pos.cy := Height;
+        end;
+  end;
+  Result := DefSubclassProc(Wnd, Msg, WP, LP);
+end;
+
+procedure TSRStereoRenderer.InstallHold(Wnd: HWND);
+begin
+  if FHoldWnd = Wnd then
+    Exit;
+  RemoveHold;
+  if SetWindowSubclass(Wnd, HoldWindowProc, HoldSubclassId, UIntPtr(Self)) then
+    FHoldWnd := Wnd
+  else
+    Log(Format('Full screen: could not hold the window in place (error %d)', [GetLastError]));
+end;
+
+procedure TSRStereoRenderer.RemoveHold;
+begin
+  if FHoldWnd <> 0 then
+  begin
+    if IsWindow(FHoldWnd) then
+      RemoveWindowSubclass(FHoldWnd, HoldWindowProc, HoldSubclassId);
+    FHoldWnd := 0;
+  end;
+end;
+
 procedure TSRStereoRenderer.SetFullScreen(const Value: Boolean);
 begin
   FFullScreen := Value;
@@ -902,14 +1010,27 @@ begin
     // monitor the form opened on, so move it to the SR display now
     if FFullScreen and FRunning and SRDisplayRect(R) then
     begin
-      R.Bottom := R.Bottom - Max(0, FFullScreenGap);
+      if FFullScreenPlain then
+        R.Bottom := R.Bottom - 1;
+      InstallHold(Wnd);
       GetWindowRect(Wnd, WR);
-      if WR <> R then
+      if (WR <> R) or (FFullScreenRect <> R) then
       begin
+        FFullScreenRect := R;
         SetWindowPos(Wnd, HWND_TOP, R.Left, R.Top, R.Width, R.Height, SWP_NOOWNERZORDER);
-        Log(Format('Full screen moved to the SR display: (%d, %d), %d x %d physical pixels',
-          [R.Left, R.Top, R.Width, R.Height]));
+        GetWindowRect(Wnd, WR);
+        Log(Format('Full screen moved to the SR display: wanted (%d, %d) %d x %d, window now ' +
+          '(%d, %d) %d x %d physical pixels', [R.Left, R.Top, R.Width, R.Height, WR.Left, WR.Top,
+          WR.Width, WR.Height]));
       end;
+    end;
+    if FHoldCorrections > 0 then
+    begin
+      Log(Format('Full screen held: %d attempt(s) to move or size the window, the last to ' +
+        '(%d, %d) %d x %d, were kept at (%d, %d) %d x %d', [FHoldCorrections, FHoldAttempt.Left,
+        FHoldAttempt.Top, FHoldAttempt.Width, FHoldAttempt.Height, FFullScreenRect.Left,
+        FFullScreenRect.Top, FFullScreenRect.Width, FFullScreenRect.Height]));
+      FHoldCorrections := 0;
     end;
     Exit;
   end;
@@ -929,8 +1050,11 @@ begin
       R := MI.rcMonitor;
       Source := 'its monitor (SR display not known yet)';
     end;
-    R.Bottom := R.Bottom - Max(0, FFullScreenGap);
-    Source := Format('%s, %d row(s) left uncovered', [Source, Max(0, FFullScreenGap)]);
+    if FFullScreenPlain then
+    begin
+      R.Bottom := R.Bottom - 1;
+      Source := Source + ', PLAIN (bottom row left uncovered, Windows not told)';
+    end;
     // Lens on before the window changes, not after (see LensWanted)
     if FRunning then
       UpdateLens(True);
@@ -939,11 +1063,17 @@ begin
     // Clear WS_MAXIMIZE as well: a maximised window is held to the work
     // area, which leaves the taskbar showing. The saved placement brings
     // the maximised state back on the way out.
+    FFullScreenRect := R;
+    FHoldCorrections := 0;
+    InstallHold(Wnd);
     SetWindowLongPtr(Wnd, GWL_STYLE, Style and not (WS_OVERLAPPEDWINDOW or WS_MAXIMIZE));
     SetWindowPos(Wnd, HWND_TOP, R.Left, R.Top, R.Width, R.Height,
       SWP_NOOWNERZORDER or SWP_FRAMECHANGED);
-    TaskbarError := MarkFullscreen(Wnd, True);
-    Source := Source + ', ' + StrIf(TaskbarError = '', 'taskbar told', TaskbarError);
+    if not FFullScreenPlain then
+    begin
+      TaskbarError := MarkFullscreen(Wnd, True);
+      Source := Source + ', ' + StrIf(TaskbarError = '', 'taskbar told', TaskbarError);
+    end;
     GetWindowRect(Wnd, WR);
     Log(Format('Full screen on %s: wanted (%d, %d) %d x %d, window now (%d, %d) %d x %d ' +
       'physical pixels, maximised %s, not re-created',
@@ -952,6 +1082,8 @@ begin
   end
   else
   begin
+    RemoveHold;
+    FFullScreenRect := TRect.Empty;
     MarkFullscreen(Wnd, False);
     SetWindowLongPtr(Wnd, GWL_STYLE, Style or WS_OVERLAPPEDWINDOW);
     if FSavedPlacement.length = SizeOf(FSavedPlacement) then
@@ -1189,7 +1321,14 @@ begin
   Wnd := FormToHWND(Form);
   FFormWnd := Wnd;
   srb_SetVSync(Ord(FVSync));
-  Log(Format('Starting LeiaSR (timeout %.1f s)', [FInitTimeout]));
+  // Only call it when needed: bridges older than the export do not have it
+  if FFlipModel or FPresentModelSet then
+  begin
+    srb_SetPresentModel(Ord(FFlipModel));
+    FPresentModelSet := True;
+  end;
+  Log(Format('Starting LeiaSR (timeout %.1f s), %s swap chain', [FInitTimeout,
+    StrIf(FFlipModel, 'flip-model', 'bitblt-model')]));
   RC := srb_Initialize(Pointer(Wnd), FInitTimeout);
   if RC <> SRB_OK then
   begin

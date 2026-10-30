@@ -174,6 +174,10 @@ function srb_SubmitViews(pixels: Pointer; viewWidth, viewHeight, pitch, pixelFor
   cdecl; external SRBridgeDll delayed;
 { Turns waiting for the vertical blank on (1) or off (0). }
 procedure srb_SetVSync(enabled: Int32); cdecl; external SRBridgeDll delayed;
+{ Chooses the swap chain model for the next @link(srb_Initialize): 0 (the
+  default) the bitblt model, as Leia's samples use; 1 the flip model. Not in
+  bridges built before 30 October 2026: call it only to choose 1. }
+procedure srb_SetPresentModel(flipModel: Int32); cdecl; external SRBridgeDll delayed;
 { Tells the weaver how many frames the rendering pipeline takes. }
 procedure srb_SetLatencyInFrames(frames: UInt64); cdecl; external SRBridgeDll delayed;
 { Asks for the lens to be on (1) or off (0). }

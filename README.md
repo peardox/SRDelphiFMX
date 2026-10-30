@@ -12,7 +12,7 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
         v  srb_SubmitViews()
  SRFmxBridge.dll (C++, MSVC)
    - child window placed exactly over the viewport (mouse passes through)
-   - its own Direct3D 11 device and flip-model swap chain
+   - its own Direct3D 11 device and swap chain (bitblt model, as Leia's samples; `FlipModel` switches to the flip model)
    - SR::IDX11Weaver1: weave(), then Present()
         |
         v
@@ -105,9 +105,9 @@ end;
 | `EyeSeparationMM` | Use this separation (63 mm, say) instead of the tracker's measured one, keeping the tracked head position; 0 uses the tracked eyes as they are |
 | `LensMode`, `LensSwitchDelay` | `lensOffOverControls` (the default) turns the display's lens off while the pointer is over anything on the SR display other than the viewport (the program's controls, drop-down lists, other programs), so they are sharp; the viewport is drawn flat meanwhile. The pointer must stay on one side for `LensSwitchDelay` ms (250) first, and nothing switches while a mouse button is held. In `FullScreen` the lens stays on. `lensAlwaysOn`, `lensAlwaysOff` force it. |
 | `SettleTime` | Milliseconds (300) the tracked eyes must be found and steady before 3D is shown, at start and after tracking is lost for over a second. Until then the viewport is drawn flat from a fixed viewer, so nothing slides while the tracker searches; the lens is not switched for this. 0 shows 3D at once. |
-| `FullScreen` | Covers the whole SR display with the form, borderless, on the form's existing window in physical pixels. Use this, not the form's own `FullScreen`: FMX re-creates the window for that and, at display scaling above 100%, sizes it in steps, and the weaver SR restarts with wove for the wrong size. Set before the form is shown, it is applied when SR starts. |
-| `FullScreenGap` | Rows left uncovered at the bottom in `FullScreen` (default 1). A window covering the SR display exactly comes out wrong: SR seems to take it for a full-screen side-by-side picture. 0 covers it exactly. |
+| `FullScreen` | Covers the whole SR display with the form, borderless, on the form's existing window in physical pixels. The window is held there from its window procedure, because FMX re-sizes it from rounded logical bounds (at 150% it put it at x = -1, one pixel onto the next monitor, and the weave went wrong). Use this, not the form's own `FullScreen`: FMX re-creates the window for that and, at display scaling above 100%, sizes it in steps, and the weaver SR restarts with wove for the wrong size. Set before the form is shown, it is applied when SR starts. |
 | `ViewportOnSRDisplay` | Read only. While the viewport's centre is on another monitor, the lens is off and the viewport is drawn flat; each change is logged. |
+| `FlipModel` | Off (the default): the bridge presents with the bitblt swap chain model, like Leia's samples. On: the flip model, which Windows can scan out directly when the window covers the display. Takes effect when SR next starts. |
 | `PlaceFormOnSRDisplay` | On (the default) moves the form onto the SR display at start-up if it opened on another monitor |
 | `LogInterval` | Milliseconds between summary lines on `OnLog` (default 1000; 0 for none). |
 | `OnLog`, `OnEyesUpdated`, `OnSystemEvent`, `OnError` | Diagnostics, eye positions in mm, SR events (UserFound/Lost, LensOn/Off, ContextInvalid...), failures. |

@@ -136,6 +136,9 @@ struct Bridge {
     int      vsync = 1;
     uint64_t latencyFrames = 0;   // 0 = leave weaver default
     bool     lensOn = true;
+    bool     flipModel = false;   // false: bitblt DISCARD swap chain, as Leia's samples
+    LUID     adapterLuid{};       // the adapter the bridge's device is on
+    std::string adapterName;
 
     // Events / errors
     std::mutex                  evMutex;
@@ -389,6 +392,7 @@ int CreateSR(double timeoutSeconds)
     try { g.api.initializeSRContext(g.srContext); } catch (...) { BLog("exception in initializeSRContext"); }
     BLog("SR context initialised");
     FindSRDisplayRect();
+    LogSRDisplayAdapter();
     return SRB_OK;
 }
 
@@ -551,23 +555,116 @@ bool CreateRTV()
     ID3D11Texture2D* bb = nullptr;
     if (FAILED(g.swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb)))) return false;
     D3D11_RENDER_TARGET_VIEW_DESC rd{};
-    rd.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;     // sRGB view on a UNORM flip-model buffer
+    rd.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;     // the bitblt buffer is sRGB; on a UNORM flip-model buffer, an sRGB view
     rd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     HRESULT hr = g.dev->CreateRenderTargetView(bb, &rd, &g.rtv);
     bb->Release();
     return SUCCEEDED(hr);
 }
 
+std::string Utf8(const wchar_t* w)
+{
+    char buf[512] = {};
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, sizeof(buf) - 1, nullptr, nullptr);
+    return buf;
+}
+
+// Logs every adapter and the monitors it drives, and picks one the way
+// Leia's 1.36 DX11 sample does: not software, not Microsoft's basic adapter,
+// the most dedicated video memory. With an integrated GPU beside a discrete
+// one, the default adapter (nullptr) can be the integrated one.
+IDXGIAdapter1* ChooseAdapter()
+{
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
+        BLog("CreateDXGIFactory1 failed; using the default adapter");
+        return nullptr;
+    }
+    IDXGIAdapter1* best = nullptr;
+    SIZE_T bestMem = 0;
+    IDXGIAdapter1* a = nullptr;
+    for (UINT i = 0; factory->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+        DXGI_ADAPTER_DESC1 d{};
+        a->GetDesc1(&d);
+        const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0 || d.VendorId == 0x1414;
+        std::string outs;
+        IDXGIOutput* o = nullptr;
+        for (UINT j = 0; a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; ++j) {
+            DXGI_OUTPUT_DESC od{};
+            o->GetDesc(&od);
+            char tmp[160];
+            snprintf(tmp, sizeof(tmp), "%s%s (%ld, %ld)-(%ld, %ld)", outs.empty() ? "" : ", ",
+                     Utf8(od.DeviceName).c_str(), od.DesktopCoordinates.left, od.DesktopCoordinates.top,
+                     od.DesktopCoordinates.right, od.DesktopCoordinates.bottom);
+            outs += tmp;
+            o->Release();
+        }
+        BLog("adapter %u: %s, vendor 0x%04X, %llu MB dedicated%s; monitors: %s", i,
+             Utf8(d.Description).c_str(), d.VendorId,
+             static_cast<unsigned long long>(d.DedicatedVideoMemory / (1024 * 1024)),
+             software ? " (software, skipped)" : "", outs.empty() ? "none" : outs.c_str());
+        if (!software && (best == nullptr || d.DedicatedVideoMemory > bestMem)) {
+            if (best) best->Release();
+            best = a;
+            bestMem = d.DedicatedVideoMemory;
+        } else {
+            a->Release();
+        }
+    }
+    factory->Release();
+    return best;
+}
+
+// Says which adapter drives the SR display, and whether it is the bridge's.
+void LogSRDisplayAdapter()
+{
+    if (!g.displayRectValid) return;
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) return;
+    IDXGIAdapter1* a = nullptr;
+    bool found = false;
+    for (UINT i = 0; !found && factory->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+        DXGI_ADAPTER_DESC1 d{};
+        a->GetDesc1(&d);
+        IDXGIOutput* o = nullptr;
+        for (UINT j = 0; !found && a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; ++j) {
+            DXGI_OUTPUT_DESC od{};
+            o->GetDesc(&od);
+            if (EqualRect(&od.DesktopCoordinates, &g.displayRect)) {
+                found = true;
+                const bool same = d.AdapterLuid.LowPart == g.adapterLuid.LowPart &&
+                                  d.AdapterLuid.HighPart == g.adapterLuid.HighPart;
+                BLog("SR display is driven by adapter %u (%s): %s", i, Utf8(d.Description).c_str(),
+                     same ? "the same as the bridge's" : "NOT the bridge's; frames cross between GPUs");
+            }
+            o->Release();
+        }
+        a->Release();
+    }
+    if (!found) BLog("no adapter output matches the SR display rectangle");
+    factory->Release();
+}
+
 bool CreateD3D()
 {
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     const D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels, 2,
+    IDXGIAdapter1* chosen = ChooseAdapter();
+    const D3D_DRIVER_TYPE type = chosen ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
+    HRESULT hr = D3D11CreateDevice(chosen, type, nullptr, flags, levels, 2,
                                    D3D11_SDK_VERSION, &g.dev, nullptr, &g.ctx);
     if (hr == E_INVALIDARG) // no 11_1 runtime
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels + 1, 1,
+        hr = D3D11CreateDevice(chosen, type, nullptr, flags, levels + 1, 1,
                                D3D11_SDK_VERSION, &g.dev, nullptr, &g.ctx);
+    if (chosen) {
+        DXGI_ADAPTER_DESC1 d{};
+        chosen->GetDesc1(&d);
+        g.adapterLuid = d.AdapterLuid;
+        g.adapterName = Utf8(d.Description);
+        chosen->Release();
+    }
     if (FAILED(hr)) return false;
+    BLog("D3D11 device on %s", g.adapterName.empty() ? "the default adapter" : g.adapterName.c_str());
 
     IDXGIDevice*   dxgiDev = nullptr;
     IDXGIAdapter*  adapter = nullptr;
@@ -579,19 +676,35 @@ bool CreateD3D()
         DXGI_SWAP_CHAIN_DESC1 sd{};
         sd.Width = static_cast<UINT>(g.bbW);
         sd.Height = static_cast<UINT>(g.bbH);
-        sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        sd.BufferCount = 2;
         sd.Scaling = DXGI_SCALING_STRETCH;
-        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-        hr = factory->CreateSwapChainForHwnd(g.dev, g.child, &sd, nullptr, nullptr, &g.swap);
-        if (FAILED(hr)) { // pre-Windows-10 fallback
-            sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        if (g.flipModel) {
+            // Flip model: may be promoted to independent flip / overlays when
+            // the window covers the display, bypassing DWM composition.
+            sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;   // flip model has no sRGB buffers
+            sd.BufferCount = 2;
+            sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+            sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+            hr = factory->CreateSwapChainForHwnd(g.dev, g.child, &sd, nullptr, nullptr, &g.swap);
+            if (FAILED(hr)) { // pre-Windows-10 fallback
+                sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+                hr = factory->CreateSwapChainForHwnd(g.dev, g.child, &sd, nullptr, nullptr, &g.swap);
+            }
+        } else {
+            // Bitblt model, exactly as Leia's DX11 sample (1.34 and 1.36):
+            // one sRGB buffer, DXGI_SWAP_EFFECT_DISCARD. Always composed by
+            // DWM, never scanned out directly. Full screen broke a few
+            // seconds in with the flip model.
+            sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            sd.BufferCount = 1;
+            sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+            sd.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
             hr = factory->CreateSwapChainForHwnd(g.dev, g.child, &sd, nullptr, nullptr, &g.swap);
         }
         ok = SUCCEEDED(hr);
+        if (!ok) BLog("CreateSwapChainForHwnd (%s) failed, hr 0x%08X", g.flipModel ? "flip" : "bitblt",
+                      static_cast<unsigned>(hr));
         if (ok) factory->MakeWindowAssociation(g.child, DXGI_MWA_NO_ALT_ENTER);
     }
     SafeRelease(factory); SafeRelease(adapter); SafeRelease(dxgiDev);
@@ -674,7 +787,8 @@ SRB_API int32_t srb_Initialize(void* parentWnd, double timeoutSeconds)
     if (!CreateChildWindow(parent)) return Fail(SRB_E_WINDOW, "Could not create child window");
     if (!CreateD3D()) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return Fail(SRB_E_D3D, "Direct3D 11 initialisation failed"); }
 
-    BLog("child window %p, D3D device %p, swap chain %p", (void*)g.child, (void*)g.dev, (void*)g.swap);
+    BLog("child window %p, D3D device %p, swap chain %p (%s)", (void*)g.child, (void*)g.dev, (void*)g.swap,
+         g.flipModel ? "flip model, FLIP_DISCARD" : "bitblt model, DISCARD, as Leia's samples");
     int rc = CreateSR(timeoutSeconds);
     if (rc != SRB_OK) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return rc; }
 
@@ -867,6 +981,8 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
 }
 
 SRB_API void srb_SetVSync(int32_t enabled) { g.vsync = enabled ? 1 : 0; }
+
+SRB_API void srb_SetPresentModel(int32_t flipModel) { g.flipModel = flipModel != 0; }
 
 SRB_API void srb_SetLatencyInFrames(uint64_t frames)
 {

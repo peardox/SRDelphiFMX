@@ -57,6 +57,8 @@ type
     FSkipRender: TCheckBox;
     { Skip handing the views to the bridge. }
     FSkipSubmit: TCheckBox;
+    { Test: full screen without telling Windows and one row short. }
+    FPlainFull: TCheckBox;
     { Frames drawn, for the periodic FastMM5 scan. }
     FFrames: Integer;
     { Chooses the 3D scene or one of the stereo images in the media folder. }
@@ -125,6 +127,9 @@ type
     { Applies the diagnostic skip checkboxes to the renderer.
       @param(Sender a checkbox) }
     procedure SkipChange(Sender: TObject);
+    { Sets the renderer's plain full-screen test mode.
+      @param(Sender the checkbox) }
+    procedure PlainFullChange(Sender: TObject);
     { Logs an exception that reached the application, then shows it.
       @param(Sender the object that raised it)
       @param(E the exception) }
@@ -384,6 +389,13 @@ begin
   FSkipSubmit.Width := 180;
   FSkipSubmit.Text := 'Skip weaving (bridge)';
   FSkipSubmit.OnChange := SkipChange;
+
+  FPlainFull := TCheckBox.Create(Self);
+  FPlainFull.Parent := Bar;
+  FPlainFull.Align := TAlignLayout.Left;
+  FPlainFull.Width := 150;
+  FPlainFull.Text := 'Plain full screen (test)';
+  FPlainFull.OnChange := PlainFullChange;
 
   Lbl := TLabel.Create(Self);
   Lbl.Parent := Bar;
@@ -828,6 +840,13 @@ begin
     FSettings.LatencyFrames := FLatency.ItemIndex;
   AddLog('Weaver latency: ' + FLatency.Items[FLatency.ItemIndex]);
   SaveSettings;
+end;
+
+procedure TfrmMain.PlainFullChange(Sender: TObject);
+begin
+  FStereo.FullScreenPlain := FPlainFull.IsChecked;
+  AddLog('Plain full screen (test) ' + BoolToStr(FPlainFull.IsChecked, True) +
+    ': applies the next time full screen is entered');
 end;
 
 procedure TfrmMain.SkipChange(Sender: TObject);
