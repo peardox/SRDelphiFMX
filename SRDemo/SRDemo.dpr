@@ -6,6 +6,9 @@
       SR display, through @link(SRFmxBridge.Api) and the bridge DLL in
       @code(dll), copied beside the executable after each build.)
     @item(@link(SimulatedReality.Api) in @code(lib) is the SDK's C API.)
+    @item(@link(SRSettings) in @code(lib) keeps the eye separation and the
+      demo's choices in @code(%APPDATA%\SRDelphiFMX\settings.json), through
+      Neon (a submodule in @code(delphi-neon)).)
     @item(@link(SRDiagLog) in @code(lib) writes @code(SRDemo.log) beside the
       executable, line by line, and records native crashes in it. Logs from
       earlier runs are moved into @code(oldlogs) beside it.)
@@ -24,6 +27,7 @@ uses
   System.SysUtils,
   FMX.Forms,
   SRDiagLog in '..\lib\SRDiagLog.pas',
+  SRSettings in '..\lib\SRSettings.pas',
   MainForm in 'ui\MainForm.pas' {frmMain},
   FMX.SRStereoViewport in '..\lib\FMX.SRStereoViewport.pas',
   SRFmxBridge.Api in '..\lib\SRFmxBridge.Api.pas',

@@ -2,7 +2,212 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (29 October 2026, 22:40)
+## Where to pick up (29 October 2026, 23:55)
+
+**Display placement confirmed** (owner, 23:40): SRDemo always opens on the SR
+display.
+
+**Lens switching.** The lens covers the whole panel, so the Delphi controls
+look soft while it is on. Unticking 3D makes the panel 2D (the owner), and
+the owner understands all these devices have switchable lenses. A second
+monitor for the controls is a no-go: most users have one screen.
+
+Delivered: `TSRStereoRenderer.LensMode` (`lensOffOverControls` default,
+`lensAlwaysOn`, `lensAlwaysOff`) and `LensSwitchDelay` (250 ms). Each frame
+it checks the pointer: off the SR display, lens on; over the viewport with
+our form the window under it, lens on; anything else on the SR display, lens
+off. No change while a mouse button is held. It calls `srb_SetLens`, which
+the bridge already had (SR's switchable-lens hint), so the bridge is
+unchanged. While the lens is off both eyes are drawn from the midpoint, so
+the woven image is a clean 2D picture; stereo test images use the left half
+for both. The log says `Lens ON/OFF (reason)` and tags the summary
+`LENS-OFF`. Not yet known: whether the hint switches the lens while our
+weaver is running, and how fast the panel switches. SRDemo has a Lens combo
+in the diagnostics row, saved as `LensMode` (an integer) in settings.
+
+**Start-up drift** (owner, 23:50: "a small amount of startup drift - I guess
+it's trying to find my eyes"; suggested finding the eyes first, then
+switching). Delivered: `SettleTime` (300 ms). Until the tracked eyes are
+real (not nominal, not IPD-rebuilt) and the midpoint has stayed within 20 mm
+for that long, the lens is off and the view is drawn flat from a fixed
+viewer at (window centre, 650 mm). Losing the eyes for over a second goes
+back to waiting. Log: `Eyes found and steady ...: 3D on`, `Eyes lost ...`.
+
+**F11 "messes the screen up"** (23:47-00:07). Screenshot: the two eyes'
+images about 1800 px apart and squashed; it "almost gets there" (the flat
+picture while waiting for the eyes looked right), then goes wrong when 3D
+comes on. The log (23:58:57) had every number right: form 2560 x 1440
+logical = 3840 x 2160 physical at the owner's 150% scaling, viewport the
+whole 596.7 x 335.7 mm panel, corner (1, 1), zoom about 2.1. But FMX's
+`FullScreen` re-created the form window, so the renderer stopped and
+restarted SR, and the new weaver was created 0.2 s later, very likely while
+FMX was still sizing the new window (the owner's clue: 150% scaling, so a
+logical size used as pixels for a moment). Unconfirmed; the owner was asked
+to untick and re-tick 3D in full screen to test it.
+
+Delivered: `TSRStereoRenderer.FullScreen`. It makes the existing window
+borderless (Raymond Chen's `WS_OVERLAPPEDWINDOW` / `SetWindowPlacement`
+method) at the SR display's rectangle in physical pixels, so nothing is
+re-created and SR never restarts. SRDemo uses it instead of the form's
+`FullScreen`. If this does not fix it, the weaver does not follow window
+size changes at all, and the bridge must re-create it (or re-set its input)
+when the child window's size changes; check whether resizing the normal
+window breaks the weave too.
+
+Owner, 00:21: "better but not actually full screen" - the taskbar stayed.
+Fixed: `WS_MAXIMIZE` is cleared with the frame styles (a maximised window is
+held to the work area), and `ITaskbarList2.MarkFullscreenWindow` tells the
+shell. The log line gives the wanted and actual rectangles and whether the
+window is still maximised. No DirectX calls are needed: this is a borderless
+full-screen window, and a flip-model swap chain covering the monitor already
+gets the independent-flip path; DXGI exclusive full screen is the inferior
+mode.
+
+**Full screen works** (owner, 00:29). **But** (00:35): start, F11 (fine),
+back to normal, F11 again: broken exactly as in the 23:55 screenshot. No
+window re-creation and no SR restart now, so it is not the weaver being
+created mid-resize. Reading that screenshot again: it matches both eyes being
+taken from the left view only, each half of it stretched to the full width
+(the left half for one eye, the right half for the other: green sphere and
+cube at both edges, the rest in order), as if the weaver took the view width
+as a quarter of the texture instead of a half. Candidate trigger: the lens
+going off and on again (the first broken run also broke when the lens came
+on after waiting for the eyes; normal to full screen the first time had no
+lens switch). Asked the owner to repeat with Lens "Always on", and to send
+the log: the renderer now logs each viewport size change and traces 3
+frames after it, and the bridge logs every `setInputViewTexture`.
+
+If it is the lens or the resize, the likely fix is the SDK's own pattern: a
+fixed-size view texture (the SDK samples use the recommended 1920 x 1080 and
+never resize it; the weaver scales to the window). That is the render-scale
+work below, with the projection's aspect corrected for the window.
+
+**The full-screen fault (00:50-00:55).** Not the lens: in the 00:50 run
+(started full screen on the SR display) the lens came on once and never
+switched, and it was still wrong. Not the view size either: trimming one row
+off 3840 x 2160 views (tried, removed) changed nothing. Not resizing: that
+run was full size before SR started. What every broken run shares is a
+window covering the whole SR display exactly; a window one row short never
+broke, and the 00:39 run came right the moment Windows shrank the window to
+3441 x 1440. The picture (each eye given one half of the left view,
+stretched) is what you get if the SR system takes the full-screen window for
+a side-by-side picture: the SDK's `canWeave` notes say SR displays can
+weave side-by-side output themselves ("you can output side-by-side manually
+or let DX11Weaver handle this"). Delivered: `FullScreenGap` (default 1 row
+left uncovered at the bottom; 0 = exact, for testing), kept by the per-frame
+re-apply. If it works, a bridge rebuild could log `canWeave(w, h)` before
+and after going full screen, to see SR's own view of it.
+
+The owner asked whether display sizes are measured at the start (Sprite3D's
+DisplayData does): the SR display's rectangle is read from SR when it
+starts, and full screen goes straight to it; the 00:50 run had the window at
+its final size before SR started, so measuring sooner would not have helped.
+
+**00:39 log (owner started full screen on his 3440 x 1440 widescreen, at
+100% scaling).** The renderer moved the window to the SR display at
+3840 x 2160 before the first frame was submitted, so the weaver only ever
+had 3840 x 2160 views: the fault is not the view texture changing size. It
+was broken from the moment the lens came on (after waiting for the eyes)
+until 00:39:41.9, when Windows shrank the window to 3441 x 1440 (the
+cross-scaling move; nothing of ours did it), after which it worked at 60 fps.
+
+What all three broken cases share: the lens went off and back on while the
+window covered the whole 3840 x 2160 display. The one good full-screen run
+had no lens switch while full screen; switching in a normal window has never
+broken. Unproven, but cheap to act on. Delivered:
+- `LensWanted` keeps the lens on in `FullScreen` (nothing but the viewport is
+  showing), and full screen turns the lens on *before* resizing the window.
+- Waiting for the eyes no longer switches the lens: it only draws flat.
+- Each frame in full screen re-applies the SR display rectangle if Windows
+  has changed it.
+If it still breaks, the next step is in the bridge (re-set the weaver's
+input, or re-create the weaver, after a lens switch or a resize), or the
+SDK's fixed-size views.
+
+**Off the SR display** (owner asked; GDEM does the same): the renderer
+checks each frame whether the viewport's centre is on the SR display
+(`ViewportOnSRDisplay`); if not, the lens is off and the view flat, logged on
+each change.
+
+Full screen also runs at 32-41 fps instead of 60: 3840 x 2160 per eye is
+66 MB read back per frame. Offered: a render scale (SR recommends 1920 x
+1080 per eye). That needs a separate, smaller context, since the viewport's
+own context is sized to the viewport.
+
+Also noted: the light-blue back wall moves with the head because it is 8
+units (about 13 cm) behind the glass; that is correct parallax.
+
+## Earlier (23:45)
+
+**The view-matrix fix works (owner, 23:32).** The scene fills the viewport,
+`corner` is (1.0000, 1.0000) for both eyes, the zoom is about 2.57 (right for
+823 mm from a 264 mm-high window), and "as I move my head around the model
+balls + cube all move properly". The drift is solved. A screen grab shows both
+eyes blended: the cube on the glass single, the spheres doubled by their
+distance from it. One 237 ms frame at 23:31:04; watch whether that repeats.
+
+**F11 still did nothing** with `OnKeyDown` on the form. Now delivered: a
+thread keyboard hook (`WH_KEYBOARD`, in `MainForm.pas`, with the few user32
+calls declared locally so `Winapi.Windows` doesn't hide FMX names) sees F11
+and Esc before FMX or the bridge's child window, swallows them, and queues
+the toggle. The log says which window had the keyboard
+(`keyboard focus <class> ($handle)`) and the form's size and state after each
+change. Still untested: SR display placement on the owner's several monitors.
+
+## Earlier (23:40)
+
+**The real cause of the drift, found from FMX's own source** (the owner sent
+`FMX.Types3D.pas`, `FMX.Controls3D.pas`, `FMX.Viewport3D.pas` and
+`FMX.Context.DX11.pas` from Delphi 13; they are not to be copied into the
+repository):
+
+- `TContext3D.GetCurrentModelViewProjectionMatrix` is
+  `CurrentMatrix * CurrentCameraMatrix * CurrentProjectionMatrix`, and that is
+  what reaches the shaders (`ApplyMaterial`). So **the matrix given to
+  `SetCameraMatrix` is the view matrix itself**. `TCamera.CameraMatrix` is one
+  (`CreateLookAtDirRH`). The renderer had assumed the opposite: it passed a
+  camera placement and expected FMX to invert it.
+- `GetProjectionMatrix` is cached and only rebuilt when
+  `FRecalcProjectionMatrix` is set, on context create or resize.
+  `SetCameraAngleOfView` and `SetRenderToMatrix` do not set it, so neither has
+  any effect between frames.
+- My per-frame "corner" check used `CurrentCameraInvMatrix`, the same wrong
+  assumption, so it reported (1, 1) while the GPU drew something else.
+- What the owner saw (OBS recording and a screenshot, 23:13): the scene about
+  a sixth of its proper size, both eyes' copies identical but shifted, and
+  the whole picture sliding with the head. That is the wrong matrix exactly.
+
+**Fixed, delivered:** `RenderEye` builds the eye's view as
+`RefView * Translation(-eye) * OffAxis`, where `OffAxis` is the shear plus a
+zoom of TanRef / TanEye, and passes that to `SetCameraMatrix`. FMX's own
+projection is used as it is. The corner check now uses the shaders' formula
+(world * `CurrentCameraMatrix` * `CurrentProjectionMatrix`). The axis signs
+are measured in view space through the projection. Lighting is unaffected:
+materials get the model matrix, and the eye position (the inverse's origin)
+is unchanged by the shear and zoom.
+
+Also delivered: full screen (F11) hides the toolbars and log, F11 or Esc
+leaves it, and both keys are logged. The owner had found F11 did not return.
+
+Next: the owner runs it. The scene should now fill the viewport as in 2D, the
+two eyes' copies should differ by depth (the cube on the glass nearly single,
+the wall and spheres doubled oppositely), and the picture should stay still,
+apart from look-around parallax.
+
+## Earlier (23:00)
+
+**22:37 run:** images "look better" letterboxed, but "the drift still happens"; it isn't yet clear whether the images drift too or only the scene. The owner noticed a lot of on-screen movement as the head moves, which is the look-around (motion parallax). There was one 2.9 s stall at 22:37:53, with the weaver's latency at 150 ms for that second; cause not known (possibly the owner doing something else). The first run opened on the wrong monitor (the owner has several). The owner will try a screen recording, though OBS doesn't understand SR displays.
+
+Delivered (the bridge changed, so it must be rebuilt):
+
+- **SR display placement.** The bridge finds the SR display's desktop rectangle: through `SR::Display::getLocation` via `DisplayMirror` (a class mirroring `SR::Display`'s virtual functions, since `WorldObject` has none), checked against the C API, called under SEH. If that fails it matches monitors by resolution and EDID size (`GetDeviceCaps` HORZSIZE/VERTSIZE). New export `srb_GetDisplayRect`. `srb_GetWindowRectMM` now measures against the SR display, not the monitor the window is on. The renderer moves the form there at start (`PlaceFormOnSRDisplay`).
+- **LookAround** (renderer property, demo checkbox): off draws from a fixed viewer 650 mm in front of the viewport centre. If the drift goes away with it off, the drift was the look-around.
+- **Settings** (`lib/SRSettings.pas`, Neon, `%APPDATA%\SRDelphiFMX\settings.json`, GDEMSettings' pattern). The demo has an eye separation number box (default 63, 0 = tracked) and a latency combo, and saves on every change.
+- `CREDITS.md`, written GDEM-style.
+
+The owner usually wants multi-platform code, but this project is Windows only by design (Leia's Android version is left out: no device).
+
+## Earlier (22:40)
 
 **The weaving is proven (22:20 run).** Media images woven as given, with no 3D
 rendering: Avatar01/02 and beer.jpg are "extremely good stereo" (the owner).
@@ -122,15 +327,18 @@ changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supp
 - The C context handle (`newSRContext`) is passed to `CreateDX11Weaver` as `SR::SRContext*`. This isn't documented, but it matches how the C API wraps every other object.
 - The bridge owns a child window over the viewport (`WM_NCHITTEST` returns `HTTRANSPARENT`, so the mouse reaches FMX), plus its own D3D11 device and flip-model swap chain. Views are uploaded through typeless textures with sRGB views, and the render target view on the back buffer is sRGB too, so the weaver does no sRGB conversion in its shader.
 - `TSRStereoRenderer` renders the viewport's 3D children into the viewport's own `TContext3D` (`RenderInternal`), once per eye. It sets the lights itself from `IViewport3D.Lights`, and reads each eye back with `CopyToBits` into one side-by-side buffer.
-- The off-axis projection is a view-space shear and zoom passed through `SetCameraMatrix` (FMX uses the inverse as the view). FMX's projection is left at the reference camera's angle: `SetCameraAngleOfView` does not change `CurrentProjectionMatrix`. The axis signs are measured against the reference camera every frame, and the viewport corner is checked against NDC (1, 1).
-- The eye frame is millimetres from the display centre, x right, y up, z towards the viewer. The window rectangle in mm comes from the child window's screen rectangle, the monitor it is on, and the SR display's physical size.
+- The off-axis projection is built into the view matrix passed to `SetCameraMatrix`: `RefView * Translation(-eye) * OffAxis` (a shear plus a zoom). FMX's projection is left as it is. The axis signs are measured in view space every frame, and the viewport corner is checked against NDC (1, 1) with the shaders' own formula.
+- The eye frame is millimetres from the display centre, x right, y up, z towards the viewer. The window rectangle in mm comes from the child window's screen rectangle, the SR display's desktop rectangle (`FindSRDisplayRect`; the window's monitor only if that is unknown), and the SR display's physical size.
 
 ## Lessons learned
 
+- `MonitorFromWindow`, `GetMonitorInfo`, `TMonitorInfo` and `MONITOR_DEFAULTTONEAREST` are in `Winapi.MultiMon`, not `Winapi.Windows` (GDEM's `GDEMFetch/ui/GDEMDisplays.pas`, cut down from Sprite3D's `DisplayData`, uses them the same way).
 - The IDE rewrites a multi-line post-build event into one line joined with `&&`. An `if exist ... (...) else (...)` followed by `&&` makes the next command part of the `else` branch. Write each step as a parenthesised `(command || echo warning)` instead.
 
-- `TContext3D.SetCameraAngleOfView` does not change `CurrentProjectionMatrix`, so a field of view cannot be set through it. Build the field of view into the camera matrix instead (a zoom in view space).
+- FMX 3D (`FMX.Types3D`): `SetCameraMatrix` takes the **view** matrix (world to view; `TCamera.CameraMatrix` is a `CreateLookAtDirRH` one). The shaders get `Model * CurrentCameraMatrix * Projection`, and `CurrentCameraInvMatrix` is only used for picking. The projection is cached and rebuilt only on context create or resize, so `SetCameraAngleOfView` and `SetRenderToMatrix` do nothing mid-frame. Put any field of view or off-axis change into the view matrix.
+- A self-check built on the same wrong assumption as the code proves nothing. Check against the formula the GPU uses, or against the picture: the owner's OBS recording found what the log could not.
 - The SR weaver reports both eyes at one point (0, 100, 600) before the tracker locks on.
+- `SR::Display`'s base `WorldObject` has no virtual functions, so its vtable can be mirrored (`DisplayMirror` in the bridge) to call `getLocation` without including `display.h`, which includes OpenCV.
 
 - The SDK's `sr/management/srcontext.h` includes OpenCV through the network headers. Don't include it in the bridge; the stub in `bridge/sr_stub` stands in.
 - In Delphi 13, `TContext3D.Width` and `Height` are `Single`.

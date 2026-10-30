@@ -38,6 +38,22 @@ type
     { Only when the program calls @link(TSRStereoRenderer.RenderFrame). }
     lmManual);
 
+  { When @link(TSRStereoRenderer) wants the display's lens on. The lens
+    covers the whole panel and switches only as a whole, so while it is on,
+    everything outside the viewport (the program's own controls included) is
+    seen through it and looks soft. }
+  TSRLensMode = (
+    { Lens on while the pointer is over the viewport, or off the SR display,
+      and always in @link(TSRStereoRenderer.FullScreen); off while it is
+      over anything else on the SR display (the program's controls, its
+      drop-down lists, other programs), so they are sharp. The viewport is
+      drawn flat while the lens is off. The default. }
+    lensOffOverControls,
+    { Lens always on. }
+    lensAlwaysOn,
+    { Lens always off: the viewport is drawn flat, in 2D. }
+    lensAlwaysOff);
+
   { A stage of each frame that can be skipped, to narrow down a fault. }
   TSRDiagnosticSkip = (
     { Ignore the eye tracker and use the nominal eyes. }
@@ -80,8 +96,8 @@ type
     TanRef: Single;
     { World units per millimetre. }
     Scale: Single;
-    { Zoom applied in view space so FMX's fixed projection gives the eye's
-      field of view (reference tangent over the eye's). }
+    { Zoom built into the view matrix so FMX's fixed projection gives the
+      eye's field of view (reference tangent over the eye's). }
     Zoom: Single;
     { Where the viewport's top-right corner lands, in normalised device
       coordinates: (1, 1) when the projection is right. }
@@ -159,6 +175,54 @@ type
     FStereoImageFormat: Integer;
     { Viewport size in pixels the test image was last fitted to. }
     FStereoImageFitSize: TSize;
+    { See @link(TSRStereoRenderer.LookAround). }
+    FLookAround: Boolean;
+    { See @link(TSRStereoRenderer.PlaceFormOnSRDisplay). }
+    FPlaceFormOnSRDisplay: Boolean;
+    { See @link(TSRStereoRenderer.LensMode). }
+    FLensMode: TSRLensMode;
+    { See @link(TSRStereoRenderer.LensSwitchDelay). }
+    FLensSwitchDelay: Integer;
+    { Whether the lens was last asked to be on. }
+    FLensOn: Boolean;
+    { Clock reading (ms) since which the wanted lens state has differed from
+      @link(FLensOn); -1 while they agree. }
+    FLensWantSince: Int64;
+    { Why the lens is in its current state, for the log. }
+    FLensReason: string;
+    { Whether the eye tracker has found the eyes and they have held steady
+      for @link(TSRStereoRenderer.SettleTime); until then the view is
+      flat. }
+    FEyesSettled: Boolean;
+    { Eye midpoint (mm) the settling is measured against. }
+    FSettleMid: TPoint3D;
+    { Clock reading (ms) since the eyes have been valid and within
+      @link(SettleToleranceMM) of @link(FSettleMid); -1 while not. }
+    FSettleSince: Int64;
+    { Clock reading (ms) since tracking was lost; -1 while tracked. }
+    FLostSince: Int64;
+    { See @link(TSRStereoRenderer.SettleTime). }
+    FSettleTime: Integer;
+    { See @link(TSRStereoRenderer.FullScreen). }
+    FFullScreen: Boolean;
+    { Whether the viewport's centre is on the SR display (@true when the
+      display's position is unknown). }
+    FViewportOnSR: Boolean;
+    { See @link(TSRStereoRenderer.FullScreenGap). }
+    FFullScreenGap: Integer;
+    { Whether @link(FViewportOnSR) has been logged since starting. }
+    FViewportOnSRLogged: Boolean;
+    { The viewport's rectangle given to the bridge last frame, client
+      physical pixels; empty before the first. }
+    FLastBounds: TRect;
+    { Where the form was before full screen (normal or maximised). }
+    FSavedPlacement: TWindowPlacement;
+    { The viewport in the form's client area, physical pixels. }
+    FViewportClientRect: TRect;
+    { The SR display's desktop rectangle, physical pixels. }
+    FSRRect: TRect;
+    { Whether @link(FSRRect) is known. }
+    FSRRectKnown: Boolean;
     { What the left eye's render measured. }
     FCalLeft: TSREyeCalibration;
     { What the right eye's render measured. }
@@ -275,6 +339,10 @@ type
       @param(H receives the height)
       @param(Pitch receives the bytes per row) }
     procedure CopyStereoImage(ViewportW, ViewportH: Integer; out W, H, Pitch: Integer);
+    { Moves the form onto the SR display if it is on another monitor,
+      keeping it maximised if it was.
+      @param(Form the viewport's form) }
+    procedure MoveFormToSRDisplay(const Form: TCommonCustomForm);
     { Logs the display and window details once after starting. }
     procedure LogStartDetails;
     { Logs one summary line when @link(TSRStereoRenderer.LogInterval) has
@@ -291,6 +359,32 @@ type
     function StoreInitTimeout: Boolean;
     { @returns(whether @link(TSRStereoRenderer.EyeSeparationMM) is set) }
     function StoreEyeSeparationMM: Boolean;
+    { Sets @link(TSRStereoRenderer.LensMode), applying it at once.
+      @param(Value the new mode) }
+    procedure SetLensMode(const Value: TSRLensMode);
+    { Works out whether the lens should be on now, from
+      @link(TSRStereoRenderer.LensMode) and the pointer.
+      @param(Reason receives why, for the log)
+      @returns(@true for on) }
+    function LensWanted(out Reason: string): Boolean;
+    { Switches the lens when the wanted state has held for
+      @link(TSRStereoRenderer.LensSwitchDelay), or at once if Immediate.
+      @param(Immediate switch without waiting) }
+    procedure UpdateLens(Immediate: Boolean);
+    { Follows whether the tracker has found the eyes and they are steady.
+      @param(Valid whether this frame's tracked eyes were real (not nominal
+        or rebuilt))
+      @param(Mid this frame's eye midpoint, mm) }
+    procedure UpdateSettling(Valid: Boolean; const Mid: TPoint3D);
+    { Sets @link(TSRStereoRenderer.FullScreen).
+      @param(Value whether to cover the display) }
+    procedure SetFullScreen(const Value: Boolean);
+    { Makes the form's window match @link(TSRStereoRenderer.FullScreen), if
+      it exists and does not already. }
+    procedure ApplyFullScreen;
+    { The form the viewport is on.
+      @returns(the form, or nil if there is none yet) }
+    function ViewportForm: TCommonCustomForm;
   protected
     { Starts after loading if @link(TSRStereoRenderer.Active) was set. }
     procedure Loaded; override;
@@ -320,6 +414,10 @@ type
       @raises(Exception if the file cannot be read, or is not twice as wide
         as it is high or wider) }
     procedure ShowStereoImage(const FileName: string);
+    { The SR display's rectangle on the desktop, in physical pixels.
+      @param(R receives it)
+      @returns(@true while running, if the display was found) }
+    function SRDisplayRect(out R: TRect): Boolean;
     { The SR display's properties.
       @param(Info receives them)
       @returns(@true while running) }
@@ -333,6 +431,29 @@ type
     property LeftEyeMM: TPoint3D read FLeftEyeMM;
     { Right eye used for the last frame. }
     property RightEyeMM: TPoint3D read FRightEyeMM;
+    { Whether the form covers the whole SR display, borderless (the
+      display's monitor before SR is running). Done on the form's existing
+      window, in physical pixels: FMX's own @code(FullScreen) re-creates the
+      window and, at display scaling above 100%, sizes it in steps, and a
+      weaver created part way through weaves for the wrong size. Set it
+      before the form is shown and it is applied once SR starts. The
+      program hides its own controls if it wants only the viewport. }
+    property FullScreen: Boolean read FFullScreen write SetFullScreen;
+    { Rows of the display left uncovered at the bottom in
+      @link(TSRStereoRenderer.FullScreen) (default 1). Every time the window
+      covered the whole SR display exactly, the picture came out wrong: each
+      eye got one half of the left view, stretched to full width, as if the
+      SR system took the window for a full-screen side-by-side picture (SR
+      displays can weave side-by-side input themselves). A window one row
+      short never did. 0 covers the display exactly, for testing. }
+    property FullScreenGap: Integer read FFullScreenGap write FFullScreenGap;
+    { Whether the lens is on now (asked to be: it takes the panel a moment
+      to switch). While it is off the viewport is drawn flat. }
+    property LensOn: Boolean read FLensOn;
+    { Whether the viewport is on the SR display. While its centre is on
+      another monitor the lens is off and the viewport is drawn flat; it is
+      logged each time it changes. }
+    property ViewportOnSRDisplay: Boolean read FViewportOnSR;
     { The last error. }
     property LastError: string read FLastError;
     { The stereo image being shown, empty while the scene is shown. }
@@ -357,6 +478,30 @@ type
       the tracker's reading wanders. }
     property EyeSeparationMM: Single read FEyeSeparationMM write FEyeSeparationMM
       stored StoreEyeSeparationMM;
+    { @true (the default) draws the scene from where the head is, so moving
+      the head looks around objects (motion parallax). @false draws from a
+      fixed position in front of the viewport, still with the eye
+      separation, so there is depth but the picture does not move with the
+      head. }
+    property LookAround: Boolean read FLookAround write FLookAround default True;
+    { Whether starting moves the form onto the SR display when it is on
+      another monitor. }
+    property PlaceFormOnSRDisplay: Boolean read FPlaceFormOnSRDisplay
+      write FPlaceFormOnSRDisplay default True;
+    { When the lens is on; see @link(TSRLensMode). }
+    property LensMode: TSRLensMode read FLensMode write SetLensMode
+      default lensOffOverControls;
+    { Milliseconds the pointer must stay on one side of the viewport's edge
+      before @link(lensOffOverControls) switches the lens, so passing over
+      the controls does not make it flicker. }
+    property LensSwitchDelay: Integer read FLensSwitchDelay write FLensSwitchDelay
+      default 250;
+    { Milliseconds the tracked eyes must be found and steady (within 20 mm)
+      before 3D is shown, at start and after tracking is lost for more than
+      a second. Until then the viewport is drawn flat from a fixed viewer,
+      so the picture does not slide while the tracker searches; the lens is
+      not switched for this. 0 shows 3D at once. }
+    property SettleTime: Integer read FSettleTime write FSettleTime default 300;
     { Seconds to wait for the SR service and display when starting. }
     property InitTimeout: Double read FInitTimeout write FInitTimeout stored StoreInitTimeout;
     { Whether presenting waits for the vertical blank. }
@@ -389,7 +534,7 @@ type
 implementation
 
 uses
-  FMX.Platform.Win, SimulatedReality.Api;
+  Winapi.MultiMon, Winapi.ShlObj, System.Win.ComObj, FMX.Platform.Win, SimulatedReality.Api;
 
 const
   { Default @link(TSRStereoRenderer.FocusDistance): FMX's usual camera sits
@@ -414,6 +559,13 @@ const
   MaxIpdMM = 85.0;
   { Separation used to rebuild bad eye pairs around their midpoint, mm. }
   NominalIpdMM = 63.0;
+  { How far (mm) the eye midpoint may wander while counting as steady for
+    @link(TSRStereoRenderer.SettleTime). }
+  SettleToleranceMM = 20.0;
+  { Milliseconds without tracking before 3D waits to settle again. }
+  LostResettleMs = 1000;
+  { Frames traced stage by stage after the viewport changes size. }
+  ResizeTraceFrames = 3;
 
 { Formats a point with no decimals for the log.
   @param(P the point)
@@ -421,6 +573,20 @@ const
 function FmtPt(const P: TPoint3D): string;
 begin
   Result := Format('(%.0f, %.0f, %.0f)', [P.X, P.Y, P.Z]);
+end;
+
+{ Picks one of two strings (System.StrUtils.IfThen would hide
+  System.Math.IfThen, which this unit uses for numbers).
+  @param(Condition which to pick)
+  @param(WhenTrue the string for @true)
+  @param(WhenFalse the string for @false)
+  @returns(the chosen string) }
+function StrIf(Condition: Boolean; const WhenTrue, WhenFalse: string): string;
+begin
+  if Condition then
+    Result := WhenTrue
+  else
+    Result := WhenFalse;
 end;
 
 { Formats a sign as + or -.
@@ -445,6 +611,15 @@ begin
   FVSync := True;
   FLoopMode := lmIdle;
   FLogInterval := 1000;
+  FLookAround := True;
+  FPlaceFormOnSRDisplay := True;
+  FLensMode := lensOffOverControls;
+  FLensSwitchDelay := 250;
+  FLensOn := True;
+  FLensWantSince := -1;
+  FSettleTime := 300;
+  FFullScreenGap := 1;
+  FViewportOnSR := True;
   FWindowVisible := -1;
   FLeftEyeMM := Point3D(NominalLeftX, 0, NominalZ);
   FRightEyeMM := Point3D(NominalRightX, 0, NominalZ);
@@ -542,17 +717,276 @@ begin
     for Y := 0 to SrcH - 1 do
     begin
       Src := Data.GetScanline(Y);
-      // left half of the image into the left view, right half into the right
+      // left half of the image into the left view, right half into the
+      // right; with the lens off, the left half into both, so it is flat
       System.Move(Src^, FBuffer[(Y + OffY) * Pitch + OffX * 4], SrcW * 4);
-      System.Move((Src + SrcW * 4)^, FBuffer[(Y + OffY) * Pitch + (W + OffX) * 4], SrcW * 4);
+      if FLensOn then
+        System.Move((Src + SrcW * 4)^, FBuffer[(Y + OffY) * Pitch + (W + OffX) * 4], SrcW * 4)
+      else
+        System.Move(Src^, FBuffer[(Y + OffY) * Pitch + (W + OffX) * 4], SrcW * 4);
     end;
   finally
     FStereoImage.Unmap(Data);
   end;
   FStereoImageFitSize := TSize.Create(ViewportW, ViewportH);
   FStereoImageDirty := False;
-  Log(Format('Stereo image fitted: %d x %d per eye in a %d x %d view (viewport %d x %d), format %d',
-    [SrcW, SrcH, W, H, ViewportW, ViewportH, FStereoImageFormat]));
+  Log(Format('Stereo image fitted: %d x %d per eye in a %d x %d view (viewport %d x %d), format %d%s',
+    [SrcW, SrcH, W, H, ViewportW, ViewportH, FStereoImageFormat,
+     StrIf(FLensOn, '', ', flat (lens off)')]));
+end;
+
+procedure TSRStereoRenderer.SetLensMode(const Value: TSRLensMode);
+begin
+  FLensMode := Value;
+  if FRunning then
+    UpdateLens(True);
+end;
+
+function TSRStereoRenderer.LensWanted(out Reason: string): Boolean;
+var
+  P, C: TPoint;
+  Over: HWND;
+begin
+  // The lens is the SR display's: with the viewport on another monitor
+  // there is nothing to look at through it
+  if not FViewportOnSR then
+  begin
+    Reason := 'the viewport is not on the SR display';
+    Exit(False);
+  end;
+  case FLensMode of
+    lensAlwaysOn:
+      begin
+        Reason := 'LensMode always on';
+        Exit(True);
+      end;
+    lensAlwaysOff:
+      begin
+        Reason := 'LensMode always off';
+        Exit(False);
+      end;
+  end;
+  // Full screen shows nothing but the viewport, so keep the lens on. Each
+  // of the three broken full-screen pictures so far came right after the
+  // lens went off and on again while the window covered the whole display,
+  // and the one that worked had no switch.
+  if FFullScreen then
+  begin
+    Reason := 'full screen';
+    Exit(True);
+  end;
+  if not GetCursorPos(P) then
+  begin
+    Reason := 'pointer position unknown';
+    Exit(FLensOn);
+  end;
+  // While a button is held (dragging a slider, say) nothing changes
+  if (GetAsyncKeyState(VK_LBUTTON) < 0) or (GetAsyncKeyState(VK_RBUTTON) < 0) then
+  begin
+    Reason := FLensReason;
+    Exit(FLensOn);
+  end;
+  if FSRRectKnown and not FSRRect.Contains(P) then
+  begin
+    Reason := 'pointer is off the SR display';
+    Exit(True);
+  end;
+  // Over the viewport only if no other window (a drop-down list, another
+  // program) is in the way: the window under the pointer must be our form
+  // or the bridge's child window in it
+  Over := WindowFromPoint(P);
+  if (Over = 0) or (GetAncestor(Over, GA_ROOT) <> FFormWnd) then
+  begin
+    Reason := 'pointer is over another window';
+    Exit(False);
+  end;
+  C := P;
+  ScreenToClient(FFormWnd, C);
+  Result := FViewportClientRect.Contains(C);
+  if Result then
+    Reason := 'pointer is over the viewport'
+  else
+    Reason := 'pointer is over the controls';
+end;
+
+procedure TSRStereoRenderer.UpdateSettling(Valid: Boolean; const Mid: TPoint3D);
+var
+  NowMs: Int64;
+begin
+  NowMs := FClock.ElapsedMilliseconds;
+  if not Valid then
+  begin
+    FSettleSince := -1;
+    if FLostSince < 0 then
+      FLostSince := NowMs;
+    if FEyesSettled and (NowMs - FLostSince > LostResettleMs) then
+    begin
+      FEyesSettled := False;
+      Log(Format('Eyes lost for over %d ms: drawn flat until they are found again', [LostResettleMs]));
+    end;
+    Exit;
+  end;
+  FLostSince := -1;
+  if FEyesSettled then
+    Exit;
+  if (FSettleSince < 0) or (Mid.Distance(FSettleMid) > SettleToleranceMM) then
+  begin
+    FSettleSince := NowMs;
+    FSettleMid := Mid;
+  end;
+  if NowMs - FSettleSince >= FSettleTime then
+  begin
+    FEyesSettled := True;
+    Log(Format('Eyes found and steady for %d ms at %s: 3D on%s', [FSettleTime, FmtPt(Mid),
+      StrIf(FLensOn, '', ' (once the lens is on)')]));
+  end;
+end;
+
+function TSRStereoRenderer.ViewportForm: TCommonCustomForm;
+begin
+  Result := nil;
+  if (FViewport <> nil) and (FViewport.Root <> nil) and
+    (FViewport.Root.GetObject is TCommonCustomForm) then
+    Result := TCommonCustomForm(FViewport.Root.GetObject);
+end;
+
+{ Tells the shell a window is full screen, so the taskbar stays out of its
+  way while it is in front (the documented way: ITaskbarList2).
+  @param(Wnd the window)
+  @param(Value whether it is full screen)
+  @returns(empty on success, else what went wrong) }
+function MarkFullscreen(Wnd: HWND; Value: Boolean): string;
+var
+  TaskBar: ITaskbarList2;
+  HR: HRESULT;
+begin
+  Result := '';
+  try
+    TaskBar := CreateComObject(CLSID_TaskbarList) as ITaskbarList2;
+    HR := TaskBar.HrInit;
+    if Succeeded(HR) then
+      HR := TaskBar.MarkFullscreenWindow(Wnd, Value);
+    if Failed(HR) then
+      Result := Format('ITaskbarList2 failed, HRESULT $%.8x', [Cardinal(HR)]);
+  except
+    on E: Exception do
+      Result := 'ITaskbarList2 not available: ' + E.Message;
+  end;
+end;
+
+procedure TSRStereoRenderer.SetFullScreen(const Value: Boolean);
+begin
+  FFullScreen := Value;
+  if not (csDesigning in ComponentState) then
+    ApplyFullScreen;
+end;
+
+procedure TSRStereoRenderer.ApplyFullScreen;
+var
+  Form: TCommonCustomForm;
+  Wnd: HWND;
+  Style: NativeInt;
+  R, WR: TRect;
+  Mon: HMONITOR;
+  MI: TMonitorInfo;
+  Source, TaskbarError: string;
+begin
+  Form := ViewportForm;
+  if (Form = nil) or (Form.Handle = nil) then
+    Exit;   // applied when SR starts
+  Wnd := FormToHWND(Form);
+  Style := GetWindowLongPtr(Wnd, GWL_STYLE);
+  if FFullScreen = ((Style and WS_CAPTION) = 0) then
+  begin
+    // Already as wanted; but full screen set before SR started covers the
+    // monitor the form opened on, so move it to the SR display now
+    if FFullScreen and FRunning and SRDisplayRect(R) then
+    begin
+      R.Bottom := R.Bottom - Max(0, FFullScreenGap);
+      GetWindowRect(Wnd, WR);
+      if WR <> R then
+      begin
+        SetWindowPos(Wnd, HWND_TOP, R.Left, R.Top, R.Width, R.Height, SWP_NOOWNERZORDER);
+        Log(Format('Full screen moved to the SR display: (%d, %d), %d x %d physical pixels',
+          [R.Left, R.Top, R.Width, R.Height]));
+      end;
+    end;
+    Exit;
+  end;
+  if FFullScreen then
+  begin
+    if FRunning and SRDisplayRect(R) then
+      Source := 'the SR display'
+    else
+    begin
+      Mon := MonitorFromWindow(Wnd, MONITOR_DEFAULTTONEAREST);
+      MI.cbSize := SizeOf(MI);
+      if not GetMonitorInfo(Mon, @MI) then
+      begin
+        Log('Full screen: no monitor found for the window');
+        Exit;
+      end;
+      R := MI.rcMonitor;
+      Source := 'its monitor (SR display not known yet)';
+    end;
+    R.Bottom := R.Bottom - Max(0, FFullScreenGap);
+    Source := Format('%s, %d row(s) left uncovered', [Source, Max(0, FFullScreenGap)]);
+    // Lens on before the window changes, not after (see LensWanted)
+    if FRunning then
+      UpdateLens(True);
+    FSavedPlacement.length := SizeOf(FSavedPlacement);
+    GetWindowPlacement(Wnd, @FSavedPlacement);
+    // Clear WS_MAXIMIZE as well: a maximised window is held to the work
+    // area, which leaves the taskbar showing. The saved placement brings
+    // the maximised state back on the way out.
+    SetWindowLongPtr(Wnd, GWL_STYLE, Style and not (WS_OVERLAPPEDWINDOW or WS_MAXIMIZE));
+    SetWindowPos(Wnd, HWND_TOP, R.Left, R.Top, R.Width, R.Height,
+      SWP_NOOWNERZORDER or SWP_FRAMECHANGED);
+    TaskbarError := MarkFullscreen(Wnd, True);
+    Source := Source + ', ' + StrIf(TaskbarError = '', 'taskbar told', TaskbarError);
+    GetWindowRect(Wnd, WR);
+    Log(Format('Full screen on %s: wanted (%d, %d) %d x %d, window now (%d, %d) %d x %d ' +
+      'physical pixels, maximised %s, not re-created',
+      [Source, R.Left, R.Top, R.Width, R.Height, WR.Left, WR.Top, WR.Width, WR.Height,
+       BoolToStr(IsZoomed(Wnd), True)]));
+  end
+  else
+  begin
+    MarkFullscreen(Wnd, False);
+    SetWindowLongPtr(Wnd, GWL_STYLE, Style or WS_OVERLAPPEDWINDOW);
+    if FSavedPlacement.length = SizeOf(FSavedPlacement) then
+      SetWindowPlacement(Wnd, @FSavedPlacement);
+    SetWindowPos(Wnd, 0, 0, 0, 0, 0, SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or
+      SWP_NOOWNERZORDER or SWP_FRAMECHANGED);
+    GetWindowRect(Wnd, R);
+    Log(Format('Full screen off: window back at (%d, %d), %d x %d physical pixels',
+      [R.Left, R.Top, R.Width, R.Height]));
+  end;
+end;
+
+procedure TSRStereoRenderer.UpdateLens(Immediate: Boolean);
+var
+  Want: Boolean;
+  Reason: string;
+  NowMs: Int64;
+begin
+  Want := LensWanted(Reason);
+  if Want = FLensOn then
+  begin
+    FLensWantSince := -1;
+    Exit;
+  end;
+  NowMs := FClock.ElapsedMilliseconds;
+  if FLensWantSince < 0 then
+    FLensWantSince := NowMs;
+  if not Immediate and (NowMs - FLensWantSince < FLensSwitchDelay) then
+    Exit;
+  FLensOn := Want;
+  FLensWantSince := -1;
+  FLensReason := Reason;
+  srb_SetLens(Ord(FLensOn));
+  FStereoImageDirty := True;   // a test image is copied flat while the lens is off
+  Log(Format('Lens %s (%s)', [StrIf(FLensOn, 'ON', 'OFF: viewport drawn flat'), Reason]));
 end;
 
 function TSRStereoRenderer.StoreInitTimeout: Boolean;
@@ -770,6 +1204,18 @@ begin
   FRunning := True;
   FActive := True;
   FWindowVisible := -1;
+  FSRRectKnown := SRDisplayRect(FSRRect);
+
+  FViewportOnSR := True;
+  FViewportOnSRLogged := False;
+  FLastBounds := TRect.Empty;
+  FLensOn := True;
+  FLensWantSince := -1;
+  FLensReason := 'starting';
+  FEyesSettled := FSettleTime <= 0;
+  FSettleSince := -1;
+  FLostSince := -1;
+  srb_SetLens(1);
   FLastLogMs := FClock.ElapsedMilliseconds;
   FPrevFrameMs := FClock.Elapsed.TotalMilliseconds;
   FFramesSinceLog := 0;
@@ -779,6 +1225,10 @@ begin
   FFrameNo := 0;
   HookLoop;
   LogStartDetails;
+  if FPlaceFormOnSRDisplay then
+    MoveFormToSRDisplay(Form);
+  if FFullScreen then
+    ApplyFullScreen;
   Result := True;
   if Assigned(FOnStarted) then
     FOnStarted(Self);
@@ -812,6 +1262,47 @@ begin
     Log(Format('frame %d: %s', [FFrameNo, Stage]));
 end;
 
+function TSRStereoRenderer.SRDisplayRect(out R: TRect): Boolean;
+var
+  B: TSRBRect;
+begin
+  R := TRect.Empty;
+  Result := FRunning and (srb_GetDisplayRect(B) = SRB_OK);
+  if Result then
+    R := TRect.Create(B[0], B[1], B[2], B[3]);
+end;
+
+procedure TSRStereoRenderer.MoveFormToSRDisplay(const Form: TCommonCustomForm);
+var
+  SR, WR: TRect;
+  WasMaximized: Boolean;
+  W, H: Integer;
+begin
+  if not SRDisplayRect(SR) then
+  begin
+    Log('SR display position unknown; the window stays where it is');
+    Exit;
+  end;
+  GetWindowRect(FFormWnd, WR);
+  if SR.Contains(WR.CenterPoint) then
+  begin
+    Log(Format('Window is on the SR display (%d, %d)-(%d, %d)', [SR.Left, SR.Top, SR.Right, SR.Bottom]));
+    Exit;
+  end;
+  Log(Format('Window centre (%d, %d) is not on the SR display (%d, %d)-(%d, %d); moving it there',
+    [WR.CenterPoint.X, WR.CenterPoint.Y, SR.Left, SR.Top, SR.Right, SR.Bottom]));
+  WasMaximized := Form.WindowState = TWindowState.wsMaximized;
+  if WasMaximized then
+    Form.WindowState := TWindowState.wsNormal;
+  GetWindowRect(FFormWnd, WR);
+  W := Min(WR.Width, SR.Width);
+  H := Min(WR.Height, SR.Height);
+  SetWindowPos(FFormWnd, 0, SR.Left + (SR.Width - W) div 2, SR.Top + (SR.Height - H) div 2, W, H,
+    SWP_NOZORDER or SWP_NOACTIVATE);
+  if WasMaximized then
+    Form.WindowState := TWindowState.wsMaximized;
+end;
+
 procedure TSRStereoRenderer.LogStartDetails;
 var
   Info: TSRBDisplayInfo;
@@ -828,14 +1319,23 @@ begin
     Log(Format('Viewport on display: centre (%.1f, %.1f) mm, %.1f x %.1f mm',
       [Cx, Cy, W, H]));
   Log(Format('FocusDistance %.2f, EyeSeparationScale %.2f, EyeSeparationMM %.1f (0 = tracked), ' +
-    'VSync %s, loop %d', [FFocusDistance, FEyeSeparationScale, FEyeSeparationMM,
-    BoolToStr(FVSync, True), Ord(FLoopMode)]));
+    'LookAround %s, LatencyFrames %d, VSync %s, loop %d, LensMode %d (0 off over controls, ' +
+    '1 always on, 2 always off), LensSwitchDelay %d ms, SettleTime %d ms', [FFocusDistance,
+    FEyeSeparationScale, FEyeSeparationMM, BoolToStr(FLookAround, True), FLatencyFrames,
+    BoolToStr(FVSync, True), Ord(FLoopMode), Ord(FLensMode), FLensSwitchDelay, FSettleTime]));
+  if FSRRectKnown then
+    Log(Format('Lens control uses the SR display at (%d, %d)-(%d, %d)',
+      [FSRRect.Left, FSRRect.Top, FSRRect.Right, FSRRect.Bottom]))
+  else
+    Log('SR display position unknown: the lens treats every point as on it');
 end;
 
 procedure TSRStereoRenderer.LogPeriodic;
 const
   NominalTag: array[Boolean] of string = ('', ' NOMINAL');
   IpdTag: array[Boolean] of string = ('', ' IPD-REBUILT');
+  LookTag: array[Boolean] of string = (' FIXED-VIEWER', '');
+  LensTag: array[Boolean] of string = (' LENS-OFF', '');
 var
   NowMs: Int64;
   Secs: Double;
@@ -855,7 +1355,7 @@ begin
     'cam %s%s',
     [FFramesSinceLog / Secs, FWorstFrameMs, FResultCounts[0], FResultCounts[1],
      FResultCounts[2], FmtPt(FLeftEyeMM), FmtPt(FRightEyeMM), Ipd,
-     NominalTag[FUsingNominalEyes], FmtPt(FRefCameraPos), IpdTag[FIpdRepaired]]));
+     NominalTag[FUsingNominalEyes], FmtPt(FRefCameraPos), IpdTag[FIpdRepaired] + LookTag[FLookAround] + LensTag[FLensOn]]));
   Log(Format('  viewport c(%.1f, %.1f) %.1fx%.1f mm, view %dx%d | cal R%s U%s F%s tanRef %.4f ' +
     'scale %.5f | L zoom %.4f corner (%.4f, %.4f) shear (%.4f, %.4f) | R zoom %.4f corner (%.4f, %.4f) shear (%.4f, %.4f)',
     [FWinCenterMM.X, FWinCenterMM.Y, FWinSizeMM.Width, FWinSizeMM.Height, FViewSize.cx,
@@ -882,6 +1382,8 @@ var
   Scale: Single;
   P: TPointF;
   L, T, R, B, Vis: Integer;
+  Centre: TPoint;
+  OnSR: Boolean;
 begin
   Result := False;
   if (FViewport = nil) or (FViewport.Scene = nil) then
@@ -901,6 +1403,31 @@ begin
   end;
   if Vis = 0 then
     Exit;
+  FViewportClientRect := TRect.Create(L, T, R, B);
+  Centre := FViewportClientRect.CenterPoint;
+  ClientToScreen(FFormWnd, Centre);
+  OnSR := (not FSRRectKnown) or FSRRect.Contains(Centre);
+  if (OnSR <> FViewportOnSR) or not FViewportOnSRLogged then
+  begin
+    FViewportOnSR := OnSR;
+    FViewportOnSRLogged := True;
+    if OnSR then
+      Log(Format('Viewport centre (%d, %d) is on the SR display', [Centre.X, Centre.Y]))
+    else
+      Log(Format('Viewport centre (%d, %d) is NOT on the SR display (%d, %d)-(%d, %d): ' +
+        'lens off and drawn flat until it is back', [Centre.X, Centre.Y, FSRRect.Left,
+        FSRRect.Top, FSRRect.Right, FSRRect.Bottom]));
+  end;
+  if (R - L <> FLastBounds.Width) or (B - T <> FLastBounds.Height) then
+  begin
+    if FLastBounds.Width > 0 then
+    begin
+      Log(Format('Viewport size changed from %d x %d to %d x %d physical pixels; tracing %d frames',
+        [FLastBounds.Width, FLastBounds.Height, R - L, B - T, ResizeTraceFrames]));
+      FTraceLeft := Max(FTraceLeft, ResizeTraceFrames);
+    end;
+  end;
+  FLastBounds := TRect.Create(L, T, R, B);
   Result := srb_SetBounds(L, T, R - L, B - T) = SRB_OK;
 end;
 
@@ -911,7 +1438,7 @@ var
   Cam: TCamera;
   L, R: TSRBVec3;
   EL, ER, Mid, Dir: TPoint3D;
-  Cx, Cy, Wmm, Hmm, NowMs: Double;
+  Cx, Cy, Wmm, Hmm, NowMs, Sep: Double;
   W, H, Pitch, Fmt, RC: Integer;
   Form: TCommonCustomForm;
 begin
@@ -938,6 +1465,11 @@ begin
   Inc(FFrameNo);
   try
     try
+      // Keep full screen exactly on the SR display: moving a window between
+      // monitors of different scaling makes Windows resize it (the owner's
+      // 00:39 run went from 3840 x 2160 to 3441 x 1440 that way)
+      if FFullScreen then
+        ApplyFullScreen;
       TraceStage('placing window');
       if not UpdateWindowBounds then
         Exit;
@@ -1011,6 +1543,32 @@ begin
         Exit;
       FWinCenterMM := PointF(Cx, Cy);
       FWinSizeMM := TSizeF.Create(Wmm, Hmm);
+      if not FLookAround then
+      begin
+        // Fixed viewer straight in front of the viewport, real separation:
+        // depth, but the picture no longer moves with the head
+        Sep := EL.Distance(ER);
+        EL := Point3D(Cx - Sep * 0.5, Cy, NominalZ);
+        ER := Point3D(Cx + Sep * 0.5, Cy, NominalZ);
+        FLeftEyeMM := EL;
+        FRightEyeMM := ER;
+      end;
+      UpdateSettling(not (FUsingNominalEyes or FIpdRepaired or (dsTracking in FDiagnosticSkip)),
+        (EL + ER) * 0.5);
+      UpdateLens(False);
+      if not (FLensOn and FEyesSettled) then
+      begin
+        // No lens: both eyes see the same pixels, so draw one view; the
+        // weave of two equal views is that view. Also while the tracker
+        // searches (the lens is left as it is, to avoid switching it): from
+        // a fixed viewer, so the picture does not slide.
+        if FEyesSettled then
+          Mid := (EL + ER) * 0.5
+        else
+          Mid := Point3D(Cx, Cy, NominalZ);
+        EL := Mid;
+        ER := Mid;
+      end;
       FViewSize := TSize.Create(W, H);
       FRefCameraPos := Point3D(Cam.AbsolutePosition.X, Cam.AbsolutePosition.Y,
         Cam.AbsolutePosition.Z);
@@ -1087,18 +1645,19 @@ end;
 procedure TSRStereoRenderer.RenderEye(const Ctx: TContext3D; const RefCamera: TCamera;
   const EyeMM: TPoint3D; Dest: Pointer; Pitch: Integer; out Cal: TSREyeCalibration);
 var
-  RefM, ViewProj, EyeM, ViewInv, PassM: TMatrix3D;
+  RefView, EyeView, OffAxis, Proj: TMatrix3D;
   V: TVector3D;
+  Eye: TPoint3D;
   Dx, Dy, Ez, A, B, C, TanEye: Single;
 
-  { Takes a point in the reference camera's local space to clip space.
-    @param(X local x)
-    @param(Y local y)
-    @param(Z local z)
+  { Takes a point in the reference camera's view space to clip space.
+    @param(X view x)
+    @param(Y view y)
+    @param(Z view z)
     @returns(the clip-space point) }
-  function ClipOfLocal(const X, Y, Z: Single): TVector3D;
+  function ClipOfView(const X, Y, Z: Single): TVector3D;
   begin
-    Result := TVector3D.Create(X, Y, Z, 1) * RefM * ViewProj;
+    Result := TVector3D.Create(X, Y, Z, 1) * Proj;
   end;
 
 begin
@@ -1109,20 +1668,28 @@ begin
     Exit;
   end;
   try
-    // Measure FMX's conventions against the reference camera instead of
-    // assuming them: which local axes point forward, right and up on screen,
-    // and the camera's vertical field of view.
-    RefM := RefCamera.CameraMatrix;
-    Ctx.SetCameraMatrix(RefM);
-    Ctx.SetCameraAngleOfView(RefCamera.AngleOfView);
-    ViewProj := Ctx.CurrentCameraInvMatrix * Ctx.CurrentProjectionMatrix;
-    V := ClipOfLocal(0, 0, 1);
+    { How FMX draws (FMX.Types3D, Delphi 13): the shaders get
+        CurrentMatrix * CurrentCameraMatrix * CurrentProjectionMatrix,
+      so the matrix given to SetCameraMatrix IS the view matrix (world to
+      view); TCamera.CameraMatrix is one, made with CreateLookAtDirRH. The
+      projection is made from the angle of view only when the context is
+      created or resized, so SetCameraAngleOfView has no effect between
+      frames: the projection stays the viewport camera's. So the eye's whole
+      off-axis projection is built into the view matrix, and FMX's own
+      projection is used as it is. }
+    RefView := RefCamera.CameraMatrix;
+    Ctx.SetCameraMatrix(RefView);
+    Proj := Ctx.CurrentProjectionMatrix;
+
+    // Measure the view space's conventions rather than assume them: which
+    // axis points forward, which right and which up on the screen
+    V := ClipOfView(0, 0, 1);
     Cal.SgnF := IfThen(V.W >= 0, 1, -1);
-    V := ClipOfLocal(1, 0, 10 * Cal.SgnF);
+    V := ClipOfView(1, 0, 10 * Cal.SgnF);
     Cal.SgnR := IfThen(V.X * V.W >= 0, 1, -1);
-    V := ClipOfLocal(0, 1, 10 * Cal.SgnF);
+    V := ClipOfView(0, 1, 10 * Cal.SgnF);
     Cal.SgnU := IfThen(V.Y * V.W >= 0, 1, -1);   // clip +y is the top of the image
-    Cal.TanRef := 1 / Abs(Ctx.CurrentProjectionMatrix.m22);
+    Cal.TanRef := 1 / Abs(Proj.m22);
 
     // The viewport's rectangle lies FocusDistance in front of the reference
     // camera and fills its vertical field of view there.
@@ -1131,26 +1698,18 @@ begin
     Dy := (EyeMM.Y - FWinCenterMM.Y) * Cal.Scale;
     Ez := EyeMM.Z * Cal.Scale;
 
-    // The eye's camera: the reference camera moved in its own local frame
-    EyeM := TMatrix3D.CreateTranslation(Point3D(Cal.SgnR * Dx, Cal.SgnU * Dy,
-      Cal.SgnF * (FFocusDistance - Ez))) * RefM;
+    // The eye in the reference camera's view space (the glass plane is
+    // FocusDistance ahead), and the view from there: the reference view
+    // moved so the eye is at the origin.
+    Eye := Point3D(Cal.SgnR * Dx, Cal.SgnU * Dy, Cal.SgnF * (FFocusDistance - Ez));
+    EyeView := RefView * TMatrix3D.CreateTranslation(Point3D(-Eye.X, -Eye.Y, -Eye.Z));
 
-    // The whole off-axis projection is built into the view matrix; FMX's own
-    // projection is left exactly as the reference camera has it. (Changing
-    // the angle of view with SetCameraAngleOfView did not change
-    // CurrentProjectionMatrix: the first hardware log showed it fixed at the
-    // reference 45 degrees, so the eyes were drawn with the wrong field of
-    // view, which is what made the image split and drift.)
-    //
-    // In the eye's local space the screen centre is at (A, B, C). A shear
-    //   x' = x - (A/C) z,  y' = y - (B/C) z
-    // moves it onto the view axis, so FMX's symmetric frustum becomes the
-    // asymmetric window frustum (Kooima's generalised perspective
-    // projection, as in the SDK sample). A zoom of x' and y' by
-    // Zoom = TanRef / TanEye then makes the reference field of view equal the
-    // eye's: the viewport exactly fills the image from where the eye is.
-    // SetCameraMatrix(M) uses M's inverse as the view, so pass
-    // (Shear * Zoom)^-1 * EyeM.
+    // Off-axis: from the eye, the viewport's centre is at (A, B, C). The
+    // shear x' = x - (A/C)z, y' = y - (B/C)z moves it onto the view axis, so
+    // FMX's symmetric frustum becomes the asymmetric window frustum
+    // (Kooima's generalised perspective projection, as in the SDK sample),
+    // and the zoom TanRef / TanEye makes the reference field of view the
+    // eye's, so the viewport exactly fills the image from where the eye is.
     A := -Cal.SgnR * Dx;
     B := -Cal.SgnU * Dy;
     C := Cal.SgnF * Ez;
@@ -1158,19 +1717,19 @@ begin
     Cal.ShearY := B / C;
     TanEye := (FWinSizeMM.Height * 0.5) / EyeMM.Z;
     Cal.Zoom := Cal.TanRef / TanEye;
-    ViewInv := TMatrix3D.Identity;     // inverse of Shear * Zoom
-    ViewInv.m11 := 1 / Cal.Zoom;
-    ViewInv.m22 := 1 / Cal.Zoom;
-    ViewInv.m31 := Cal.ShearX;
-    ViewInv.m32 := Cal.ShearY;
-    PassM := ViewInv * EyeM;
-    Ctx.SetCameraMatrix(PassM);
+    OffAxis := TMatrix3D.Identity;
+    OffAxis.m11 := Cal.Zoom;
+    OffAxis.m22 := Cal.Zoom;
+    OffAxis.m31 := -Cal.Zoom * Cal.ShearX;
+    OffAxis.m32 := -Cal.Zoom * Cal.ShearY;
+    Ctx.SetCameraMatrix(EyeView * OffAxis);
 
-    // Check: the viewport's top-right corner on the glass must land on the
-    // image's top-right corner, (1, 1) in normalised device coordinates.
-    ViewProj := Ctx.CurrentCameraInvMatrix * Ctx.CurrentProjectionMatrix;
-    V := ClipOfLocal(Cal.SgnR * FWinSizeMM.Width * 0.5 * Cal.Scale,
-      Cal.SgnU * FWinSizeMM.Height * 0.5 * Cal.Scale, Cal.SgnF * FFocusDistance);
+    // Check with the formula the shaders use: the viewport's top-right
+    // corner on the glass must land on the image's top-right corner, (1, 1)
+    // in normalised device coordinates.
+    V := TVector3D.Create(Cal.SgnR * FWinSizeMM.Width * 0.5 * Cal.Scale,
+      Cal.SgnU * FWinSizeMM.Height * 0.5 * Cal.Scale, Cal.SgnF * FFocusDistance, 1) *
+      RefView.Inverse * Ctx.CurrentCameraMatrix * Ctx.CurrentProjectionMatrix;
     if V.W <> 0 then
       Cal.CornerNdc := PointF(V.X / V.W, V.Y / V.W);
     TraceStage(Format('  projection set: scale %.5f zoom %.4f shear (%.4f, %.4f) corner (%.4f, %.4f)',

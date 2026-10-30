@@ -9,6 +9,5 @@ object frmMain: TfrmMain
   FormFactor.Devices = [Desktop]
   OnCreate = FormCreate
   OnClose = FormClose
-  OnKeyDown = FormKeyDown
   DesignerMasterStyle = 0
 end

@@ -30,6 +30,9 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
 | `lib/FMX.SRStereoViewport.Reg.pas` | Registers the component for a design-time package |
 | `lib/SRFmxBridge.Api.pas` | Delphi imports for the bridge DLL |
 | `lib/SimulatedReality.Api.pas` | The SDK's C API (context, display, lens, eye/head/weaver trackers, system events) |
+| `lib/SRSettings.pas` | Saved settings (`%APPDATA%\SRDelphiFMX\settings.json`), read and written with Neon |
+| `delphi-neon/` | Neon JSON library (submodule, never changed) |
+| `CREDITS.md` | Licences of everything used |
 | `lib/SRDiagLog.pas` | Crash-proof log file, plus handlers that record native crashes and the bridge's own log lines in it |
 | `FastMM5/` | FastMM5 memory manager (submodule, never changed); full debug mode in Debug builds |
 | `bridge/` | C++ source of `SRFmxBridge.dll` and its CMake build |
@@ -98,12 +101,20 @@ end;
 | `EyeSeparationScale` | 1 is physically correct. Less is gentler; more exaggerates depth. |
 | `LoopMode` | `lmIdle`: continuous and paced by the vertical blank; it chains any existing `Application.OnIdle`. `lmTimer`, or `lmManual` where the program calls `RenderFrame`. |
 | `VSync`, `LatencyFrames` | Present pacing, and the latency hint for SR's eye prediction. |
+| `LookAround` | On (the default) draws from where the head is, so you can look around objects. Off draws from a fixed viewer in front of the viewport: depth, but no motion with the head. |
+| `EyeSeparationMM` | Use this separation (63 mm, say) instead of the tracker's measured one, keeping the tracked head position; 0 uses the tracked eyes as they are |
+| `LensMode`, `LensSwitchDelay` | `lensOffOverControls` (the default) turns the display's lens off while the pointer is over anything on the SR display other than the viewport (the program's controls, drop-down lists, other programs), so they are sharp; the viewport is drawn flat meanwhile. The pointer must stay on one side for `LensSwitchDelay` ms (250) first, and nothing switches while a mouse button is held. In `FullScreen` the lens stays on. `lensAlwaysOn`, `lensAlwaysOff` force it. |
+| `SettleTime` | Milliseconds (300) the tracked eyes must be found and steady before 3D is shown, at start and after tracking is lost for over a second. Until then the viewport is drawn flat from a fixed viewer, so nothing slides while the tracker searches; the lens is not switched for this. 0 shows 3D at once. |
+| `FullScreen` | Covers the whole SR display with the form, borderless, on the form's existing window in physical pixels. Use this, not the form's own `FullScreen`: FMX re-creates the window for that and, at display scaling above 100%, sizes it in steps, and the weaver SR restarts with wove for the wrong size. Set before the form is shown, it is applied when SR starts. |
+| `FullScreenGap` | Rows left uncovered at the bottom in `FullScreen` (default 1). A window covering the SR display exactly comes out wrong: SR seems to take it for a full-screen side-by-side picture. 0 covers it exactly. |
+| `ViewportOnSRDisplay` | Read only. While the viewport's centre is on another monitor, the lens is off and the viewport is drawn flat; each change is logged. |
+| `PlaceFormOnSRDisplay` | On (the default) moves the form onto the SR display at start-up if it opened on another monitor |
 | `LogInterval` | Milliseconds between summary lines on `OnLog` (default 1000; 0 for none). |
 | `OnLog`, `OnEyesUpdated`, `OnSystemEvent`, `OnError` | Diagnostics, eye positions in mm, SR events (UserFound/Lost, LensOn/Off, ContextInvalid...), failures. |
 
 ### How the projection works
 
-The bridge reports where the viewport sits on the panel, in millimetres, in the same display-centred frame the eye tracker uses. Each eye's camera is the reference camera moved by the eye's offset. A view-space shear, passed through `TContext3D.SetCameraMatrix`, turns FMX's symmetric frustum into the asymmetric "window" frustum. This is Kooima's generalised perspective projection, the same as the SDK's DX11 sample. A zoom in the same matrix gives each eye its true field of view. FMX's own projection is never changed, because `SetCameraAngleOfView` turned out to have no effect on `CurrentProjectionMatrix`. The code measures FMX's axis and handedness conventions from the context's own matrices every frame instead of assuming them, and checks the result against the viewport's corner.
+The bridge reports where the viewport sits on the panel, in millimetres, in the same display-centred frame the eye tracker uses. FMX draws with `Model * CameraMatrix * Projection`, where the camera matrix is the view matrix. Its projection is fixed while a frame is drawn, because it is rebuilt only when the context is resized. So each eye's view is the reference camera's view, moved to the eye, followed by a shear and a zoom. The shear turns FMX's symmetric frustum into the asymmetric "window" frustum, and the zoom gives the eye's true field of view. This is Kooima's generalised perspective projection, the same as the SDK's DX11 sample. Every frame checks that the viewport's corner lands on the image's corner, using the GPU's own formula.
 
 ## The log
 
@@ -115,6 +126,14 @@ With `OnLog` set (SRDemo shows it under the toolbar, with **Copy log** and **Cle
   2. **Projection:** the viewport rectangle in mm and the view size in pixels; the measured axis signs, the reference field of view and the world-to-mm scale; and for each eye the zoom, the shear, and where the viewport's top-right corner lands in normalised device coordinates. That last value should be (1.0000, 1.0000); anything else means the projection is wrong.
   3. **Bridge:** frames presented, woven, 2D and hidden; context re-creations; caught exceptions; the weaver's latency; the last `Present` result; and the back buffer size.
 - **Also:** every SR system event, and every error.
+
+## Settings
+
+SRDemo keeps its settings in `%APPDATA%\SRDelphiFMX\settings.json`: the eye separation (63 mm by default), the depth scale, the focus distance, look-around, the weaver's latency, the last image shown and full screen. Every change is saved straight away. A missing setting keeps its default. The **Diagnostics** row has the eye separation (0 = as tracked), **Look-around** and **Latency** (SR's default or 1 to 4 frames).
+
+## Multiple monitors
+
+At start-up the bridge finds where the SR display is on the desktop and logs it, with the method it used. It asks SR first (`SR::Display::getLocation`, called without including the SDK's OpenCV-dependent header, and checked against the C API before being trusted). If that fails, it matches monitors by resolution and physical size; every monitor it saw is logged. If the window opened on another monitor, it is moved onto the SR display (still maximised if it was). Millimetre positions are measured against the SR display, wherever the window is.
 
 ## Finding crashes
 
@@ -139,7 +158,7 @@ How the pieces help:
 - 2D controls must not overlap the viewport. The woven image is a native child window above the FMX surface. Mouse input passes through to FMX, but FMX controls drawn over that area are hidden.
 - One GPU-to-CPU-to-GPU copy per frame. `CopyToBits` reads each eye back and the bridge uploads it again. A zero-copy path is possible later: render into a DXGI-shared texture on FMX's DX11 device and open it in the bridge.
 - One SR viewport per process.
-- The lens covers the whole panel. While it is on, everything outside the woven viewport (other windows, the desktop, the program's own 2D controls) is seen through it unwoven, and looks blurred. That's the hardware, not the program; the SDK's own windowed samples behave the same way. A full-screen viewport avoids it.
+- The lens covers the whole panel and switches only as a whole. While it is on, everything outside the woven viewport (other windows, the desktop, the program's own 2D controls) is seen through it unwoven, and looks blurred. That's the hardware, not the program. `LensMode = lensOffOverControls` (the default) turns it off while the pointer is away from the viewport; a full-screen viewport avoids the question.
 - Starting blocks for up to `InitTimeout` seconds (default 5) while it waits for the SR service.
 - After an SR context loss (a service restart), the bridge shows the left view in 2D and retries every 3 seconds.
 - Every bridge export masks floating-point exceptions while it runs and catches C++ exceptions, so neither reaches Delphi.
@@ -166,7 +185,7 @@ These are the working rules for this project, as in GDEM. Read this README, then
 
 ### Code
 
-- Delphi 13, FMX, Windows 64-bit (the SR runtime exists only there). `lib/` units still compile for Win32, so a design-time package loads in the IDE.
+- Delphi 13, FMX, Windows 64-bit. The owner normally wants cross-platform code, but this project is Windows only: the SR runtime is Windows only, apart from Leia's Android version, which there is no device to test on. `lib/` units still compile for Win32, so a design-time package loads in the IDE.
 - Shared units go in `lib/`; a program's forms go in its own `ui/` folder; the bridge DLL goes in `dll/`.
 - Document all Pascal in PasDoc format (`@abstract`, `@param`, `@returns`, `@link`), with private fields included. Before delivering, run `python3 tools/pasdoc_check.py` from the root; it should print `No problems found`.
 - Source files are ASCII only. Keep the UTF-8 byte order mark on `.dproj` and `.groupproj` files.

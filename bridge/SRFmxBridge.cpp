@@ -147,6 +147,11 @@ struct Bridge {
 
     // Diagnostics (srb_GetStats)
     SRB_Stats stats{};
+
+    // Where the SR display is on the desktop (physical pixels), see FindSRDisplayRect
+    RECT displayRect{};
+    bool displayRectValid = false;
+    std::string displayRectSource;
 };
 
 Bridge g;
@@ -319,6 +324,8 @@ void TearDownSR()
     }
 }
 
+void FindSRDisplayRect();   // below, with the display search
+
 // Creates context, waits for the display, creates weaver. Requires D3D + child window.
 int CreateSR(double timeoutSeconds)
 {
@@ -381,7 +388,120 @@ int CreateSR(double timeoutSeconds)
     // 6. Initialise context after all senses / weaver are created (as in the SDK samples)
     try { g.api.initializeSRContext(g.srContext); } catch (...) { BLog("exception in initializeSRContext"); }
     BLog("SR context initialised");
+    FindSRDisplayRect();
     return SRB_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Finding the SR display on the desktop
+// ---------------------------------------------------------------------------
+
+// The C API has no getLocation, but SR::Display (sr/world/display/display.h)
+// does. Its base, WorldObject, has no virtual functions, so SR::Display's
+// vtable is exactly its own virtual functions in declaration order. This
+// class declares the same functions in the same order, so calling through
+// it calls the real ones, without including display.h (which pulls in
+// OpenCV). The result is only trusted after getResolutionWidth through the
+// mirror matches the C API's answer.
+class DisplayMirror {
+public:
+    virtual ~DisplayMirror() = default;
+    virtual const int getResolutionHeight() = 0;
+    virtual const int getResolutionWidth() = 0;
+    virtual const int getPhysicalResolutionHeight() = 0;
+    virtual const int getPhysicalResolutionWidth() = 0;
+    virtual const float getPhysicalSizeHeight() = 0;
+    virtual const float getPhysicalSizeWidth() = 0;
+    virtual const float getDotPitch() = 0;
+    virtual SR_recti getLocation() = 0;
+    virtual int getRecommendedViewsTextureWidth() = 0;
+    virtual int getRecommendedViewsTextureHeight() = 0;
+};
+
+// Calls the mirror under SEH, so a wrong guess about the handle cannot crash.
+bool MirrorLocation(void* display, int* resolutionWidth, SR_recti* location)
+{
+#ifdef _MSC_VER
+    __try {
+#endif
+        DisplayMirror* m = static_cast<DisplayMirror*>(display);
+        *resolutionWidth = m->getResolutionWidth();
+        *location = m->getLocation();
+        return true;
+#ifdef _MSC_VER
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+#endif
+}
+
+struct MonitorSearch {
+    int width = 0, height = 0;          // SR resolution, pixels
+    double widthMM = 0, heightMM = 0;   // SR physical size
+    double bestScore = 1e30;
+    RECT best{};
+    int candidates = 0;
+};
+
+BOOL CALLBACK MonitorSearchProc(HMONITOR mon, HDC, LPRECT, LPARAM param)
+{
+    MonitorSearch* ms = reinterpret_cast<MonitorSearch*>(param);
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(mon, &mi)) return TRUE;
+    const int w = mi.rcMonitor.right - mi.rcMonitor.left;
+    const int h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+    double hmm = 0, vmm = 0;
+    HDC dc = CreateDCW(L"DISPLAY", mi.szDevice, nullptr, nullptr);
+    if (dc) { hmm = GetDeviceCaps(dc, HORZSIZE); vmm = GetDeviceCaps(dc, VERTSIZE); DeleteDC(dc); }
+    BLog("monitor %ls at (%ld, %ld) %d x %d px, %.0f x %.0f mm", mi.szDevice,
+         mi.rcMonitor.left, mi.rcMonitor.top, w, h, hmm, vmm);
+    if (w != ms->width || h != ms->height) return TRUE;
+    ms->candidates++;
+    // Closest physical size wins; a monitor reporting no size scores badly but can still win
+    const double score = (hmm > 0 && vmm > 0) ? std::abs(hmm - ms->widthMM) + std::abs(vmm - ms->heightMM) : 1e6;
+    if (score < ms->bestScore) { ms->bestScore = score; ms->best = mi.rcMonitor; }
+    return TRUE;
+}
+
+// Finds the SR display's rectangle on the desktop, first from SR itself, then
+// by matching monitors' resolution and physical size. Logs what it found.
+void FindSRDisplayRect()
+{
+    g.displayRectValid = false;
+    if (!g.display) return;
+    const int resW = g.api.getResolutionWidth(g.display);
+    const int resH = g.api.getResolutionHeight(g.display);
+
+    int mirrorW = 0;
+    SR_recti loc{};
+    if (MirrorLocation(g.display, &mirrorW, &loc) && mirrorW == resW &&
+        loc.right - loc.left == resW && loc.bottom - loc.top == resH) {
+        g.displayRect = { static_cast<LONG>(loc.left), static_cast<LONG>(loc.top),
+                          static_cast<LONG>(loc.right), static_cast<LONG>(loc.bottom) };
+        g.displayRectValid = true;
+        g.displayRectSource = "SR::Display::getLocation";
+    } else {
+        BLog("SR::Display::getLocation not usable (mirror width %d, location %lld,%lld-%lld,%lld); matching monitors",
+             mirrorW, loc.left, loc.top, loc.right, loc.bottom);
+        MonitorSearch ms;
+        ms.width = resW;
+        ms.height = resH;
+        ms.widthMM = g.api.getPhysicalSizeWidth(g.display) * 10.0;
+        ms.heightMM = g.api.getPhysicalSizeHeight(g.display) * 10.0;
+        EnumDisplayMonitors(nullptr, nullptr, MonitorSearchProc, reinterpret_cast<LPARAM>(&ms));
+        if (ms.candidates > 0) {
+            g.displayRect = ms.best;
+            g.displayRectValid = true;
+            g.displayRectSource = ms.candidates == 1 ? "monitor match (resolution)" :
+                                                       "monitor match (resolution and size)";
+        }
+    }
+    if (g.displayRectValid)
+        BLog("SR display at (%ld, %ld)-(%ld, %ld), from %s", g.displayRect.left, g.displayRect.top,
+             g.displayRect.right, g.displayRect.bottom, g.displayRectSource.c_str());
+    else
+        BLog("SR display position not found; using the monitor the window is on");
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +747,10 @@ SRB_API int32_t srb_GetWindowRectMM(double* centerX, double* centerY, double* wi
     RECT wr{};
     GetWindowRect(g.child, &wr);
     MONITORINFO mi{ sizeof(mi) };
-    GetMonitorInfoW(MonitorFromWindow(g.child, MONITOR_DEFAULTTONEAREST), &mi);
+    if (g.displayRectValid)
+        mi.rcMonitor = g.displayRect;   // the SR panel, wherever the window is
+    else
+        GetMonitorInfoW(MonitorFromWindow(g.child, MONITOR_DEFAULTTONEAREST), &mi);
     const double monW = static_cast<double>(mi.rcMonitor.right - mi.rcMonitor.left);
     const double monH = static_cast<double>(mi.rcMonitor.bottom - mi.rcMonitor.top);
     if (monW <= 0 || monH <= 0) return SRB_E_ARGS;
@@ -811,4 +934,16 @@ SRB_API void srb_SetLogCallback(SRB_LogCallback callback)
     g_logCallback = callback;
     InstallFatalHandlers();
     BLog("log callback set");
+}
+
+SRB_API int32_t srb_GetDisplayRect(int32_t* rect)
+{
+    if (!rect) return SRB_E_ARGS;
+    if (!g.initialized) return SRB_E_NOT_INITIALIZED;
+    if (!g.displayRectValid) return SRB_E_NO_DISPLAY;
+    rect[0] = g.displayRect.left;
+    rect[1] = g.displayRect.top;
+    rect[2] = g.displayRect.right;
+    rect[3] = g.displayRect.bottom;
+    return SRB_OK;
 }

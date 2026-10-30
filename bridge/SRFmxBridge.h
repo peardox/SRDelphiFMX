@@ -96,6 +96,12 @@ SRB_API void    srb_SetVisible(int32_t visible);
 
 SRB_API int32_t srb_GetDisplayInfo(SRB_DisplayInfo* info);
 
+/* The SR display's rectangle on the desktop, in physical pixels: rect[0..3] =
+ * left, top, right, bottom. Taken from SR (SR::Display::getLocation) when
+ * possible, otherwise by matching monitors' resolution and physical size.
+ * Returns SRB_E_NO_DISPLAY if it could not be found. */
+SRB_API int32_t srb_GetDisplayRect(int32_t* rect);
+
 /* Physical rectangle of the child window on the SR display, in millimetres,
  * relative to the display centre (x right, y up) - the same frame the eye
  * tracker reports in. */

@@ -129,6 +129,9 @@ type
     thread; see @link(srb_SetLogCallback). }
   TSRBLogCallback = procedure(Line: PAnsiChar); cdecl;
 
+  { Four integers: a rectangle's left, top, right and bottom. }
+  TSRBRect = array[0..3] of Int32;
+
   { Three singles: an eye position in millimetres. }
   TSRBVec3 = array[0..2] of Single;
 
@@ -151,6 +154,11 @@ function srb_SetBounds(x, y, width, height: Int32): Int32; cdecl; external SRBri
 procedure srb_SetVisible(visible: Int32); cdecl; external SRBridgeDll delayed;
 { Fills @code(info) with the SR display's properties. }
 function srb_GetDisplayInfo(info: PSRBDisplayInfo): Int32; cdecl; external SRBridgeDll delayed;
+{ The SR display's rectangle on the desktop in physical pixels, from SR
+  itself when possible, otherwise by matching monitors' resolution and
+  physical size.
+  @returns(@link(SRB_OK), or @link(SRB_E_NO_DISPLAY) if it was not found) }
+function srb_GetDisplayRect(var rect: TSRBRect): Int32; cdecl; external SRBridgeDll delayed;
 { The child window's rectangle on the SR display in millimetres, from the
   display's centre, x right and y up. }
 function srb_GetWindowRectMM(out centerX, centerY, width, height: Double): Int32; cdecl;
