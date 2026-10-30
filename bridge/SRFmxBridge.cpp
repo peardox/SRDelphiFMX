@@ -328,6 +328,7 @@ void TearDownSR()
 }
 
 void FindSRDisplayRect();   // below, with the display search
+void LogSRDisplayAdapter();  // below, with the adapter choice
 
 // Creates context, waits for the display, creates weaver. Requires D3D + child window.
 int CreateSR(double timeoutSeconds)
