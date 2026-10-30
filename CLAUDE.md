@@ -2,7 +2,7 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (30 October 2026, 02:10, end of session)
+## Where to pick up (30 October 2026, 02:15, end of session)
 
 ### What works (owner, on the hardware)
 
@@ -59,17 +59,22 @@ window covers the display, against what Leia's own samples do.
    - the adapter (bridge already picks it the samples' way, see below).
 3. Only then port the fix into `TSRStereoRenderer`.
 
-### Delivered but not yet built or tested
+### Built but not yet run
 
-- `SRDelphiFMX-gpu.zip`: `bridge/SRFmxBridge.cpp` that logs every adapter
-  and its monitors, puts the device on the one with the most dedicated
-  memory (the 1.36 sample's rule), and says which adapter drives the SR
-  display. **Bridge rebuild needed.** The 02:02 log was still the bitblt
-  bridge without it.
-- The owner's laptop: RTX 5090 Mobile drives the SR display; there is also
-  an integrated GPU. SRDemo.exe is now set to High performance in Windows
-  Graphics settings (GDEM's `GPUPreferences.pas` / `GDEMGpuPreference` can
-  do this from the program).
+- The bridge with the adapter choice (commit `4ce0f0f`, DLL built 02:13 against
+  SDK 1.36.2): it logs every adapter and the monitors it drives
+  (`adapter n: name, vendor, MB dedicated; monitors: ...`), puts its device on
+  the one with the most dedicated memory, as Leia's 1.36 sample does
+  (`D3D11 device on ...`), and after finding the SR display says which adapter
+  drives it and whether that is the bridge's (`SR display is driven by adapter
+  ...`). The first build failed (C3861, `LogSRDisplayAdapter` used before its
+  declaration); fixed with a forward declaration. The first run's log will
+  show the owner's GPU layout; check it before anything else.
+- The owner's laptop: an RTX 5090 Mobile drives the SR display; there is also
+  an integrated GPU, which cannot drive it. SRDemo.exe is set to High
+  performance in Windows Graphics settings (GDEM's `GPUPreferences.pas` /
+  `GDEMGpuPreference` can set this from the program). That made no
+  difference to the fault or the frame rate.
 
 ### Diagnostics left in on purpose
 
