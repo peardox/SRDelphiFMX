@@ -4,7 +4,7 @@ This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display f
 
 ## Session handover (5 November 2026, 09:00)
 
-**Where the last session ended.** The owner had the whole morning's work as zips of changed files, the last one `Handover.zip` (the commit "Session handover", after `a379aa6`); this repository was 41 commits ahead of `origin/main`, left for the owner to push after testing. Before building on anything, check what GitHub has: if the owner pushed, `origin/main` matches the owner's copy; if not, the zips are what the owner has, and the next zip holds only files changed since that commit. The last bridge change was `e68e735` (`srb_SceneParamsSize`); the owner had rebuilt it and both demos ran at 60 fps (Release, capped to the display's refresh).
+**Where the last session ended.** The owner pushed everything ("Demos good", `de09bb8`, 09:03) and this repository was synced to it and checked: sources as delivered, PasDoc clean, `.dproj`/`.groupproj` byte order marks kept, `dll/SRBridge.dll` rebuilt with `srb_SceneParamsSize`. The owner's own changes in that push: both projects default to Release, the IDE's deployment section in `SRDemoFMX.dproj`, per-configuration post-build events in `SRDemoVCL.dproj`, and `mk.bat` added to `bridge/.gitignore` (it is still tracked; `git rm --cached bridge/mk.bat` would stop that, if the owner wants). The next zip holds only files changed since `de09bb8` plus this note.
 
 **What the session did** (06:28 to 09:00; details in the git log):
 - Tidy-up of the full-screen hunt's diagnostics; SRFullScreenTest removed.
@@ -15,12 +15,11 @@ This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display f
 - SRDemoFMX from 33 to 60 fps by skipping FMX's own, unseen paint of the viewport.
 
 **Waiting on the owner:**
-- A test of `TidyUp.zip` (it removed the `/notopmost` and `/fmxpaint` switches only; `Handover.zip` is this file alone), then the push.
 - Not yet confirmed: full screen and back with FMX's paint skipped (eye views should stay right), and that the delayed topmost step never raises `ECannotCreateSwapChain`.
 - The question the scene was built for: which sphere (mm in front of the glass, from the status bar) is the last that fuses comfortably, windowed and full screen.
 - Whether tilt and roll go the same way in SRDemoVCL as in SRDemoFMX (flip the sign in the bridge's `sceneM` if not).
 
-**Next, if the owner wants more:** "Offered, not done" below. The owner tests every delivery before the push, so keep deliveries small.
+**Next, if the owner wants more:** "Offered, not done" below, and for a release (owner, 09:02): `media\` goes beside the exes (found already); offered, not done: logs to `%LOCALAPPDATA%\SRDelphiFMX\logs` when the exe's folder is not writable (Program Files), and a shared media location for an installer. The owner tests every delivery before the push, so keep deliveries small.
 
 ## The demo scene, speed and full screen
 
@@ -55,7 +54,6 @@ SRDemoFMX's only test switch left is `/warp` (FMX in software, to see the GPU-pr
 - An FMX `Multisample` setting (FMX renders 4x MSAA; at 4K per eye that costs a lot).
 - Creating the SR context on the background check's thread and keeping it, to save the ~200 ms left on the main thread (unknown whether SR minds the thread change).
 - Moving the GPU eye copy (`CopyEyeOnGpu`) into its own `lib/` unit.
-- Switching the projects' default configuration to Release (owner: later).
 - Offsetting the grid's depth column slightly, if spheres hide each other seen straight on.
 - Known: in `lmIdle` mode under WARP, frames are starved (OnIdle comes only when the queue is empty); moot now that software rendering stops SR by default.
 
