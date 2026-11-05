@@ -1,5 +1,5 @@
 /*
- * Stand-in for the SDK's sr/management/srcontext.h, used ONLY by SRFmxBridge.
+ * Stand-in for the SDK's sr/management/srcontext.h, used ONLY by SRBridge.
  *
  * The real header pulls in sr/network/... which includes <opencv2/opencv.hpp>;
  * that drags inline OpenCV code into this DLL needing opencv_world.lib, which

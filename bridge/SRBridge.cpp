@@ -1,5 +1,5 @@
 /*
- * SRFmxBridge.cpp - see SRFmxBridge.h for the overview.
+ * SRBridge.cpp - see SRBridge.h for the overview.
  *
  * Build with MSVC x64 (the SR weaver interface uses MSVC virtual-inheritance
  * layout, so MinGW/Clang-GNU builds are NOT ABI compatible).
@@ -12,6 +12,8 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <d3dcompiler.h>
+#include <DirectXMath.h>
 
 #include <float.h>
 #include <cstdarg>
@@ -25,16 +27,19 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
+#include <cmath>
 
 #include "sr/types.h"
 #include "sr/sense/system/systemevent.h"
 #include "sr/weaver/dx11weaver.h"
 
-#define SRFMXBRIDGE_EXPORTS
-#include "SRFmxBridge.h"
+#define SRBRIDGE_EXPORTS
+#include "SRBridge.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "d3dcompiler.lib")
 
 namespace {
 
@@ -123,12 +128,20 @@ struct Bridge {
     IDXGISwapChain1*        swap  = nullptr;
     ID3D11RenderTargetView* rtv   = nullptr;
     ID3D11Texture2D*        sbsTex = nullptr;
+    // A second swap chain on the parent window, standing in for FMX's own
+    // (srb_SetParentSwapChain): cleared and presented every frame.
+    IDXGISwapChain1*        parentSwap = nullptr;
+    ID3D11RenderTargetView* parentRtv = nullptr;
+    int  parentW = 0, parentH = 0;
     ID3D11ShaderResourceView* sbsSrv = nullptr;
     int  texViewW = 0, texViewH = 0, texFmt = -1;
     bool weaverInputDirty = true;
+    ID3D11ShaderResourceView* weaverInput = nullptr;   // the view texture the weaver was last given
 
-    // Window
+    // Window. `child` is the window the swap chain and weaver are on: the
+    // bridge's own child window, or the parent itself (weaveOnParent).
     HWND parent = nullptr, child = nullptr;
+    bool ownChild = true;          // the bridge created `child` and destroys it
     int  x = 0, y = 0, bbW = 0, bbH = 0;
     bool visible = true;
 
@@ -137,6 +150,10 @@ struct Bridge {
     uint64_t latencyFrames = 0;   // 0 = leave weaver default
     bool     lensOn = true;
     bool     flipModel = false;   // false: bitblt DISCARD swap chain, as Leia's samples
+    bool     weaveOnParent = false; // next srb_Initialize: weave into the parent window itself
+    int      adapterChoice = 0;   // next srb_Initialize: 0 most memory, 1 default, 2 the parent's monitor
+    bool     reapplyInput = false; // give the weaver its input view texture every frame
+    int      parentChain = 0;     // next srb_Initialize: 0 none, 1 bitblt, 2 flip swap chain on the parent
     LUID     adapterLuid{};       // the adapter the bridge's device is on
     std::string adapterName;
 
@@ -524,7 +541,7 @@ LRESULT CALLBACK ChildWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 bool CreateChildWindow(HWND parent)
 {
-    static const wchar_t* kClass = L"SRFmxBridgeChildWindow";
+    static const wchar_t* kClass = L"SRBridgeChildWindow";
     HINSTANCE inst = GetModuleHandleW(nullptr);
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -574,8 +591,14 @@ std::string Utf8(const wchar_t* w)
 // Leia's 1.36 DX11 sample does: not software, not Microsoft's basic adapter,
 // the most dedicated video memory. With an integrated GPU beside a discrete
 // one, the default adapter (nullptr) can be the integrated one.
+//
+// adapterChoice 1 uses the default adapter (nullptr) instead; 2 uses the
+// adapter with an output on the monitor the parent window is on, falling
+// back to the most memory if none has.
 IDXGIAdapter1* ChooseAdapter()
 {
+    HMONITOR parentMon = g.parent ? MonitorFromWindow(g.parent, MONITOR_DEFAULTTONEAREST) : nullptr;
+    IDXGIAdapter1* onParent = nullptr;
     IDXGIFactory1* factory = nullptr;
     if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory)))) {
         BLog("CreateDXGIFactory1 failed; using the default adapter");
@@ -593,6 +616,7 @@ IDXGIAdapter1* ChooseAdapter()
         for (UINT j = 0; a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; ++j) {
             DXGI_OUTPUT_DESC od{};
             o->GetDesc(&od);
+            if (!software && !onParent && od.Monitor == parentMon) { a->AddRef(); onParent = a; }
             char tmp[160];
             snprintf(tmp, sizeof(tmp), "%s%s (%ld, %ld)-(%ld, %ld)", outs.empty() ? "" : ", ",
                      Utf8(od.DeviceName).c_str(), od.DesktopCoordinates.left, od.DesktopCoordinates.top,
@@ -613,6 +637,21 @@ IDXGIAdapter1* ChooseAdapter()
         }
     }
     factory->Release();
+    if (g.adapterChoice == 1) {
+        BLog("adapter choice 1: the default adapter");
+        if (best) best->Release();
+        if (onParent) onParent->Release();
+        return nullptr;
+    }
+    if (g.adapterChoice == 2) {
+        if (onParent) {
+            if (best) best->Release();
+            BLog("adapter choice 2: the adapter driving the window's monitor");
+            return onParent;
+        }
+        BLog("adapter choice 2: no adapter output on the window's monitor; using the most memory");
+    }
+    if (onParent) onParent->Release();
     return best;
 }
 
@@ -644,6 +683,18 @@ void LogSRDisplayAdapter()
     }
     if (!found) BLog("no adapter output matches the SR display rectangle");
     factory->Release();
+}
+
+// The window's client area in screen pixels (the child has no frame, so for it
+// this is its window rectangle).
+RECT WeaverWindowScreenRect()
+{
+    RECT r{};
+    GetClientRect(g.child, &r);
+    POINT tl{ r.left, r.top }, br{ r.right, r.bottom };
+    ClientToScreen(g.child, &tl);
+    ClientToScreen(g.child, &br);
+    return { tl.x, tl.y, br.x, br.y };
 }
 
 bool CreateD3D()
@@ -712,13 +763,102 @@ bool CreateD3D()
     return ok && CreateRTV();
 }
 
+void ReleaseScene();   // below, with the native scene
+
 void DestroyD3D()
 {
+    ReleaseScene();
     if (g.ctx) { g.ctx->ClearState(); g.ctx->Flush(); }
+    SafeRelease(g.parentRtv); SafeRelease(g.parentSwap);
+    g.parentW = g.parentH = 0;
     SafeRelease(g.sbsSrv); SafeRelease(g.sbsTex);
     SafeRelease(g.rtv); SafeRelease(g.swap);
     SafeRelease(g.ctx); SafeRelease(g.dev);
     g.texViewW = g.texViewH = 0; g.texFmt = -1;
+    g.weaverInput = nullptr;
+}
+
+// The parent's swap chain's render target view (sRGB view on the bitblt
+// model's sRGB buffer, UNORM on the flip model's).
+bool CreateParentRTV()
+{
+    SafeRelease(g.parentRtv);
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(g.parentSwap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb)))) return false;
+    HRESULT hr = g.dev->CreateRenderTargetView(bb, nullptr, &g.parentRtv);
+    bb->Release();
+    return SUCCEEDED(hr);
+}
+
+// Creates a swap chain on the parent window, as FMX has on its form.
+void CreateParentSwapChain()
+{
+    if (g.parentChain == 0 || !g.ownChild) return;
+    IDXGIDevice* dxgiDev = nullptr; IDXGIAdapter* adapter = nullptr; IDXGIFactory2* factory = nullptr;
+    bool ok = SUCCEEDED(g.dev->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDev)))
+           && SUCCEEDED(dxgiDev->GetAdapter(&adapter))
+           && SUCCEEDED(adapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory)));
+    HRESULT hr = E_FAIL;
+    if (ok) {
+        RECT cr{};
+        GetClientRect(g.parent, &cr);
+        g.parentW = std::max<int>(1, cr.right - cr.left);
+        g.parentH = std::max<int>(1, cr.bottom - cr.top);
+        DXGI_SWAP_CHAIN_DESC1 sd{};
+        sd.Width = static_cast<UINT>(g.parentW);
+        sd.Height = static_cast<UINT>(g.parentH);
+        sd.SampleDesc.Count = 1;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.Scaling = DXGI_SCALING_STRETCH;
+        if (g.parentChain == 2) {
+            sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            sd.BufferCount = 2;
+            sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+            sd.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+        } else {
+            sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            sd.BufferCount = 1;
+            sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+            sd.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+        }
+        hr = factory->CreateSwapChainForHwnd(g.dev, g.parent, &sd, nullptr, nullptr, &g.parentSwap);
+        if (SUCCEEDED(hr)) factory->MakeWindowAssociation(g.parent, DXGI_MWA_NO_ALT_ENTER);
+    }
+    SafeRelease(factory); SafeRelease(adapter); SafeRelease(dxgiDev);
+    if (FAILED(hr) || !g.parentSwap || !CreateParentRTV()) {
+        SafeRelease(g.parentSwap);
+        BLog("parent swap chain (%s) could not be created, hr 0x%08X",
+             g.parentChain == 2 ? "flip" : "bitblt", static_cast<unsigned>(hr));
+        return;
+    }
+    BLog("parent swap chain %p on the parent window, %d x %d, %s model, presented every frame (as FMX's)",
+         (void*)g.parentSwap, g.parentW, g.parentH, g.parentChain == 2 ? "flip (FLIP_SEQUENTIAL)" : "bitblt (DISCARD)");
+}
+
+// Clears and presents the parent's swap chain, following the parent's size.
+void PresentParent()
+{
+    if (!g.parentSwap) return;
+    RECT cr{};
+    GetClientRect(g.parent, &cr);
+    const int w = cr.right - cr.left, h = cr.bottom - cr.top;
+    if (w < 1 || h < 1) return;
+    if (w != g.parentW || h != g.parentH) {
+        g.ctx->OMSetRenderTargets(0, nullptr, nullptr);
+        SafeRelease(g.parentRtv);
+        g.ctx->Flush();
+        if (FAILED(g.parentSwap->ResizeBuffers(0, static_cast<UINT>(w), static_cast<UINT>(h), DXGI_FORMAT_UNKNOWN, 0)) ||
+            !CreateParentRTV()) {
+            BLog("parent swap chain resize to %d x %d failed; dropped", w, h);
+            SafeRelease(g.parentRtv); SafeRelease(g.parentSwap);
+            return;
+        }
+        BLog("parent swap chain %d x %d -> %d x %d", g.parentW, g.parentH, w, h);
+        g.parentW = w; g.parentH = h;
+    }
+    const float grey[4] = { 0.15f, 0.15f, 0.2f, 1.0f };
+    g.ctx->ClearRenderTargetView(g.parentRtv, grey);
+    g.parentSwap->Present(0, 0);
 }
 
 bool ResizeBackBuffer(int w, int h)
@@ -763,6 +903,466 @@ DXGI_FORMAT ViewSrvFormat() {
     return (g.texFmt == SRB_FMT_RGBA8) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 }
 
+// The weaver window's rectangle on the SR display in millimetres, from the
+// display centre, x right and y up (the eye tracker's frame).
+int WindowRectMM(double& centerX, double& centerY, double& width, double& height)
+{
+    const RECT wr = WeaverWindowScreenRect();
+    MONITORINFO mi{ sizeof(mi) };
+    if (g.displayRectValid)
+        mi.rcMonitor = g.displayRect;   // the SR panel, wherever the window is
+    else
+        GetMonitorInfoW(MonitorFromWindow(g.child, MONITOR_DEFAULTTONEAREST), &mi);
+    const double monW = static_cast<double>(mi.rcMonitor.right - mi.rcMonitor.left);
+    const double monH = static_cast<double>(mi.rcMonitor.bottom - mi.rcMonitor.top);
+    if (monW <= 0 || monH <= 0) return SRB_E_ARGS;
+
+    double mmPerPxX = 0, mmPerPxY = 0;
+    try {
+        mmPerPxX = g.api.getPhysicalSizeWidth(g.display)  * 10.0 / monW;
+        mmPerPxY = g.api.getPhysicalSizeHeight(g.display) * 10.0 / monH;
+    } catch (...) { g.contextInvalid = true; return Fail(SRB_E_NO_DISPLAY, "SR display query failed"); }
+    if (mmPerPxX <= 0 || mmPerPxY <= 0) return SRB_E_NO_DISPLAY;
+
+    const double monCx = (mi.rcMonitor.left + mi.rcMonitor.right) * 0.5;
+    const double monCy = (mi.rcMonitor.top + mi.rcMonitor.bottom) * 0.5;
+    const double winCx = (wr.left + wr.right) * 0.5;
+    const double winCy = (wr.top + wr.bottom) * 0.5;
+
+    centerX = (winCx - monCx) * mmPerPxX;
+    centerY = -(winCy - monCy) * mmPerPxY;       // y up
+    width   = (wr.right - wr.left) * mmPerPxX;
+    height  = (wr.bottom - wr.top) * mmPerPxY;
+    return SRB_OK;
+}
+
+// Re-creates SR after a context loss (an SR service restart), at most every
+// 3 s; each attempt may block briefly while connecting to the SR service.
+void RecoverSR()
+{
+    if (g.contextInvalid || !g.weaver) {
+        ULONGLONG now = GetTickCount64();
+        if (now - g.lastReinitTick > 3000) {
+            g.lastReinitTick = now;
+            BLog("re-creating SR (context invalid %d, weaver %p)", g.contextInvalid ? 1 : 0, (void*)g.weaver);
+            TearDownSR();
+            g.stats.reinitAttempts++;
+            if (CreateSR(0.0) == SRB_OK)   // single non-blocking attempt; on failure we show 2D
+                g.stats.reinitSuccesses++;
+        }
+    }
+}
+
+// Gives the weaver its input view texture when it has changed (or every
+// frame with srb_SetReapplyInput).
+void SetWeaverInput(ID3D11ShaderResourceView* srv, int viewW, int viewH, DXGI_FORMAT fmt)
+{
+    if (!g.weaver) return;
+    if (g.weaverInputDirty || g.reapplyInput || g.weaverInput != srv) {
+        if (g.weaverInputDirty || g.weaverInput != srv)
+            BLog("setInputViewTexture(%p, %d, %d)%s", (void*)srv, viewW, viewH,
+                 g.reapplyInput ? ", and again every frame" : "");
+        g.weaver->setInputViewTexture(srv, viewW, viewH, fmt);
+        g.weaverInputDirty = false;
+        g.weaverInput = srv;
+    }
+}
+
+// Weaves the current input into the back buffer (or, with no weaver, copies
+// the left view unwoven) and presents.
+int WeaveAndPresent(ID3D11Texture2D* src, int viewW, int viewH, bool canCopy2D, bool trace)
+{
+    PresentParent();
+    if (!g.rtv) return Fail(SRB_E_D3D, "No render target");
+    const float black[4] = { 0, 0, 0, 1 };
+    g.ctx->OMSetRenderTargets(1, &g.rtv, nullptr);
+    D3D11_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(g.bbW), static_cast<float>(g.bbH), 0.0f, 1.0f };
+    g.ctx->RSSetViewports(1, &vp);
+    g.ctx->ClearRenderTargetView(g.rtv, black);
+
+    if (g.weaver) {
+        try { g.weaver->weave(); }
+        catch (...) { g.contextInvalid = true; g.stats.exceptions++; BLog("exception in weave()"); }
+        if (trace) BLog("submit: woven");
+    } else if (canCopy2D) {
+        // 2D fallback: show the left view unwoven.
+        ID3D11Texture2D* bb = nullptr;
+        if (SUCCEEDED(g.swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb)))) {
+            D3D11_BOX box{ 0, 0, 0, static_cast<UINT>(std::min(viewW, g.bbW)), static_cast<UINT>(std::min(viewH, g.bbH)), 1 };
+            g.ctx->CopySubresourceRegion(bb, 0, 0, 0, 0, src, 0, &box);
+            bb->Release();
+        }
+    }
+
+    HRESULT hr = g.swap->Present(g.vsync ? 1 : 0, 0);
+    g.stats.framesSubmitted++;
+    g.stats.lastPresentHr = static_cast<int32_t>(hr);
+    if (trace) BLog("submit: presented, hr 0x%08X", static_cast<unsigned>(hr));
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
+        return Fail(SRB_E_D3D, "D3D device removed - call srb_Finalize/srb_Initialize");
+    if (hr == DXGI_STATUS_OCCLUDED) { g.stats.framesOccluded++; return SRB_S_OCCLUDED; }
+    if (g.weaver) { g.stats.framesWoven++; return SRB_OK; }
+    g.stats.frames2D++;
+    return SRB_S_2D_FALLBACK;
+}
+
+// ---------------------------------------------------------------------------
+// The native scene (srb_RenderScene): drawn by the bridge straight into a
+// side-by-side view texture, one off-axis projection per eye, then woven.
+// No copy through the CPU. Units are millimetres in the eye tracker's frame
+// (display centre, x right, y up, z towards the viewer; the glass is z = 0).
+// ---------------------------------------------------------------------------
+using namespace DirectX;
+
+struct SceneVertex { float px, py, pz, nx, ny, nz; };
+
+struct SceneCB {
+    XMFLOAT4X4 world;
+    XMFLOAT4X4 viewProj;
+    XMFLOAT4   color;
+    XMFLOAT4   lightDir;   // xyz: the direction the light travels; w: ambient
+    XMFLOAT4   eyePos;
+};
+
+struct Scene {
+    bool tried = false, ready = false;
+    ID3D11VertexShader* vs = nullptr;
+    ID3D11PixelShader* ps = nullptr;
+    ID3D11InputLayout* layout = nullptr;
+    ID3D11Buffer* cb = nullptr;
+    ID3D11RasterizerState* rs = nullptr;
+    ID3D11Buffer* cubeVB = nullptr;   UINT cubeCount = 0;
+    ID3D11Buffer* quadVB = nullptr;   UINT quadCount = 0;
+    ID3D11Buffer* sphereVB = nullptr; ID3D11Buffer* sphereIB = nullptr; UINT sphereIndexCount = 0;
+    // Targets: both eyes side by side, and a depth buffer
+    ID3D11Texture2D* tex = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11ShaderResourceView* srv = nullptr;
+    ID3D11Texture2D* depth = nullptr;
+    ID3D11DepthStencilView* dsv = nullptr;
+    int viewW = 0, viewH = 0;
+};
+Scene gs;
+
+const char kSceneHlsl[] = R"(
+cbuffer CB : register(b0) {
+    row_major float4x4 World;
+    row_major float4x4 ViewProj;
+    float4 Color;
+    float4 LightDir;
+    float4 EyePos;
+};
+struct VSIn  { float3 pos : POSITION; float3 nrm : NORMAL; };
+struct VSOut { float4 pos : SV_Position; float3 nrm : NORMAL; float3 wpos : TEXCOORD0; };
+VSOut VS(VSIn i) {
+    VSOut o;
+    float4 w = mul(float4(i.pos, 1), World);
+    o.wpos = w.xyz;
+    o.pos = mul(w, ViewProj);
+    o.nrm = mul(float4(i.nrm, 0), World).xyz;
+    return o;
+}
+float4 PS(VSOut i) : SV_Target {
+    float3 n = normalize(i.nrm);
+    float3 l = normalize(-LightDir.xyz);
+    float3 v = normalize(EyePos.xyz - i.wpos);
+    if (dot(n, v) < 0) n = -n;   // two-sided
+    float d = saturate(dot(n, l));
+    float s = pow(saturate(dot(n, normalize(l + v))), 32) * 0.35;
+    return float4(Color.rgb * (LightDir.w + (1 - LightDir.w) * d) + s, 1);
+}
+)";
+
+void ReleaseSceneTargets()
+{
+    SafeRelease(gs.dsv); SafeRelease(gs.depth);
+    SafeRelease(gs.srv); SafeRelease(gs.rtv); SafeRelease(gs.tex);
+    gs.viewW = gs.viewH = 0;
+}
+
+void ReleaseScene()
+{
+    ReleaseSceneTargets();
+    SafeRelease(gs.sphereIB); SafeRelease(gs.sphereVB); SafeRelease(gs.quadVB); SafeRelease(gs.cubeVB);
+    SafeRelease(gs.rs); SafeRelease(gs.cb); SafeRelease(gs.layout); SafeRelease(gs.ps); SafeRelease(gs.vs);
+    gs.tried = gs.ready = false;
+}
+
+ID3D11Buffer* MakeBuffer(const void* data, UINT bytes, UINT bind)
+{
+    D3D11_BUFFER_DESC bd{};
+    bd.ByteWidth = bytes;
+    bd.Usage = D3D11_USAGE_IMMUTABLE;
+    bd.BindFlags = bind;
+    D3D11_SUBRESOURCE_DATA sd{ data, 0, 0 };
+    ID3D11Buffer* b = nullptr;
+    return SUCCEEDED(g.dev->CreateBuffer(&bd, &sd, &b)) ? b : nullptr;
+}
+
+ID3DBlob* CompileScene(const char* entry, const char* target)
+{
+    ID3DBlob* code = nullptr;
+    ID3DBlob* errors = nullptr;
+    HRESULT hr = D3DCompile(kSceneHlsl, sizeof(kSceneHlsl) - 1, "scene", nullptr, nullptr, entry, target,
+                            D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+    if (FAILED(hr))
+        BLog("scene shader %s failed to compile, hr 0x%08X: %s", entry, static_cast<unsigned>(hr),
+             errors ? static_cast<const char*>(errors->GetBufferPointer()) : "no message");
+    SafeRelease(errors);
+    return SUCCEEDED(hr) ? code : nullptr;
+}
+
+// Shaders, constant buffer and meshes, made once per device.
+bool EnsureSceneResources()
+{
+    if (gs.ready) return true;
+    if (gs.tried) return false;   // failed before; logged then
+    gs.tried = true;
+
+    ID3DBlob* vsCode = CompileScene("VS", "vs_4_0");
+    ID3DBlob* psCode = CompileScene("PS", "ps_4_0");
+    bool ok = vsCode && psCode
+        && SUCCEEDED(g.dev->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(), nullptr, &gs.vs))
+        && SUCCEEDED(g.dev->CreatePixelShader(psCode->GetBufferPointer(), psCode->GetBufferSize(), nullptr, &gs.ps));
+    if (ok) {
+        const D3D11_INPUT_ELEMENT_DESC ied[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        ok = SUCCEEDED(g.dev->CreateInputLayout(ied, 2, vsCode->GetBufferPointer(), vsCode->GetBufferSize(), &gs.layout));
+    }
+    SafeRelease(vsCode); SafeRelease(psCode);
+    if (!ok) { BLog("scene: shaders could not be created"); ReleaseScene(); gs.tried = true; return false; }
+
+    D3D11_BUFFER_DESC cbd{};
+    cbd.ByteWidth = sizeof(SceneCB);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;    // winding does not matter; the depth buffer sorts it out
+    rd.DepthClipEnable = TRUE;
+    ok = SUCCEEDED(g.dev->CreateBuffer(&cbd, nullptr, &gs.cb)) && SUCCEEDED(g.dev->CreateRasterizerState(&rd, &gs.rs));
+
+    // Cube: unit size, 6 faces of 2 triangles
+    std::vector<SceneVertex> cube;
+    const float n6[6][3] = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} };
+    for (auto& n : n6) {
+        XMVECTOR N = XMVectorSet(n[0], n[1], n[2], 0);
+        XMVECTOR U = std::abs(n[1]) > 0.5f ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
+        XMVECTOR V = XMVector3Cross(N, U);
+        XMVECTOR C = N * 0.5f;
+        XMVECTOR q[4] = { C - U * 0.5f - V * 0.5f, C + U * 0.5f - V * 0.5f, C + U * 0.5f + V * 0.5f, C - U * 0.5f + V * 0.5f };
+        const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+        for (int i : idx) {
+            XMFLOAT3 p; XMStoreFloat3(&p, q[i]);
+            cube.push_back({ p.x, p.y, p.z, n[0], n[1], n[2] });
+        }
+    }
+    // Quad: unit square in the xy plane, facing +z
+    const SceneVertex quad[6] = {
+        { -0.5f, -0.5f, 0, 0, 0, 1 }, { 0.5f, -0.5f, 0, 0, 0, 1 }, { 0.5f, 0.5f, 0, 0, 0, 1 },
+        { -0.5f, -0.5f, 0, 0, 0, 1 }, { 0.5f, 0.5f, 0, 0, 0, 1 }, { -0.5f, 0.5f, 0, 0, 0, 1 } };
+    // Sphere: unit radius
+    std::vector<SceneVertex> sv;
+    std::vector<uint16_t> si;
+    const int stacks = 24, slices = 40;
+    for (int i = 0; i <= stacks; ++i) {
+        const float phi = XM_PI * i / stacks;
+        for (int j = 0; j <= slices; ++j) {
+            const float th = XM_2PI * j / slices;
+            const float x = std::sin(phi) * std::cos(th), y = std::cos(phi), z = std::sin(phi) * std::sin(th);
+            sv.push_back({ x, y, z, x, y, z });
+        }
+    }
+    for (int i = 0; i < stacks; ++i)
+        for (int j = 0; j < slices; ++j) {
+            const uint16_t a = static_cast<uint16_t>(i * (slices + 1) + j), b = static_cast<uint16_t>(a + slices + 1);
+            const uint16_t t[6] = { a, b, static_cast<uint16_t>(a + 1), static_cast<uint16_t>(a + 1), b, static_cast<uint16_t>(b + 1) };
+            si.insert(si.end(), t, t + 6);
+        }
+    if (ok) {
+        gs.cubeVB = MakeBuffer(cube.data(), static_cast<UINT>(cube.size() * sizeof(SceneVertex)), D3D11_BIND_VERTEX_BUFFER);
+        gs.cubeCount = static_cast<UINT>(cube.size());
+        gs.quadVB = MakeBuffer(quad, sizeof(quad), D3D11_BIND_VERTEX_BUFFER);
+        gs.quadCount = 6;
+        gs.sphereVB = MakeBuffer(sv.data(), static_cast<UINT>(sv.size() * sizeof(SceneVertex)), D3D11_BIND_VERTEX_BUFFER);
+        gs.sphereIB = MakeBuffer(si.data(), static_cast<UINT>(si.size() * sizeof(uint16_t)), D3D11_BIND_INDEX_BUFFER);
+        gs.sphereIndexCount = static_cast<UINT>(si.size());
+        ok = gs.cubeVB && gs.quadVB && gs.sphereVB && gs.sphereIB;
+    }
+    if (!ok) { BLog("scene: buffers could not be created"); ReleaseScene(); gs.tried = true; return false; }
+    gs.ready = true;
+    BLog("scene ready: shaders compiled, %u cube, %u sphere vertices", gs.cubeCount, static_cast<unsigned>(sv.size()));
+    return true;
+}
+
+// The side-by-side colour target and its depth buffer, at the view size.
+bool EnsureSceneTargets(int viewW, int viewH)
+{
+    if (gs.tex && gs.viewW == viewW && gs.viewH == viewH) return true;
+    ReleaseSceneTargets();
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(viewW * 2);
+    td.Height = static_cast<UINT>(viewH);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    D3D11_RENDER_TARGET_VIEW_DESC rvd{};
+    rvd.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    rvd.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    D3D11_SHADER_RESOURCE_VIEW_DESC svd{};
+    svd.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    svd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    svd.Texture2D.MipLevels = 1;
+    D3D11_TEXTURE2D_DESC dd = td;
+    dd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    const bool ok = SUCCEEDED(g.dev->CreateTexture2D(&td, nullptr, &gs.tex))
+        && SUCCEEDED(g.dev->CreateRenderTargetView(gs.tex, &rvd, &gs.rtv))
+        && SUCCEEDED(g.dev->CreateShaderResourceView(gs.tex, &svd, &gs.srv))
+        && SUCCEEDED(g.dev->CreateTexture2D(&dd, nullptr, &gs.depth))
+        && SUCCEEDED(g.dev->CreateDepthStencilView(gs.depth, nullptr, &gs.dsv));
+    if (!ok) { ReleaseSceneTargets(); return false; }
+    gs.viewW = viewW;
+    gs.viewH = viewH;
+    g.weaverInputDirty = true;
+    BLog("scene targets %d x %d per eye", viewW, viewH);
+    return true;
+}
+
+// The eyes to draw from, after the caller's options; fills the info.
+void SceneEyes(const SRB_SceneParams& p, SRB_SceneInfo& info, XMVECTOR& el, XMVECTOR& er)
+{
+    double cx = 0, cy = 0, ww = 600, wh = 340;
+    WindowRectMM(cx, cy, ww, wh);
+    info.windowCenterX = static_cast<float>(cx);
+    info.windowCenterY = static_cast<float>(cy);
+    info.windowWidth = static_cast<float>(ww);
+    info.windowHeight = static_cast<float>(wh);
+
+    float L[3] = { 0, 0, 0 }, R[3] = { 0, 0, 0 };
+    bool got = false;
+    if (g.weaver) {
+        try { g.weaver->getPredictedEyePositions(L, R); got = true; }
+        catch (...) { g.contextInvalid = true; }
+    }
+    // Before the tracker locks on it reports both eyes at one point (0, 100, 600)
+    info.nominalEyes = (!got || L[2] < 100.0f || R[2] < 100.0f) ? 1 : 0;
+    if (info.nominalEyes) {
+        L[0] = static_cast<float>(cx) - 31.5f; L[1] = static_cast<float>(cy); L[2] = 650.0f;
+        R[0] = static_cast<float>(cx) + 31.5f; R[1] = static_cast<float>(cy); R[2] = 650.0f;
+    }
+    el = XMVectorSet(L[0], L[1], L[2], 0);
+    er = XMVectorSet(R[0], R[1], R[2], 0);
+    XMVECTOR mid = (el + er) * 0.5f;
+    float sep = XMVectorGetX(XMVector3Length(er - el));
+    XMVECTOR dir = sep > 1.0f ? (er - el) / sep : XMVectorSet(1, 0, 0, 0);
+    info.separationRebuilt = (sep < 45.0f || sep > 85.0f) ? 1 : 0;
+    if (info.separationRebuilt) sep = 63.0f;
+    if (p.eyeSeparationMM > 0) sep = p.eyeSeparationMM;
+    if (p.depthScale > 0) sep *= p.depthScale;
+    if (!p.lookAround) {
+        mid = XMVectorSet(static_cast<float>(cx), static_cast<float>(cy), 650.0f, 0);
+        dir = XMVectorSet(1, 0, 0, 0);
+    }
+    if (p.flat) sep = 0;
+    el = mid - dir * (sep * 0.5f);
+    er = mid + dir * (sep * 0.5f);
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(info.leftEye), el);
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(info.rightEye), er);
+}
+
+void DrawSceneMesh(const XMMATRIX& world, XMFLOAT4 color, const XMMATRIX& viewProj, FXMVECTOR eye,
+                   ID3D11Buffer* vb, ID3D11Buffer* ib, UINT count)
+{
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(g.ctx->Map(gs.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
+    SceneCB* c = static_cast<SceneCB*>(m.pData);
+    XMStoreFloat4x4(&c->world, world);
+    XMStoreFloat4x4(&c->viewProj, viewProj);
+    c->color = color;
+    XMStoreFloat4(&c->lightDir, XMVector3Normalize(XMVectorSet(-0.35f, -0.55f, -0.75f, 0)));
+    c->lightDir.w = 0.3f;
+    XMStoreFloat4(&c->eyePos, eye);
+    g.ctx->Unmap(gs.cb, 0);
+    const UINT stride = sizeof(SceneVertex), offset = 0;
+    g.ctx->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
+    if (ib) {
+        g.ctx->IASetIndexBuffer(ib, DXGI_FORMAT_R16_UINT, 0);
+        g.ctx->DrawIndexed(count, 0, 0);
+    } else {
+        g.ctx->Draw(count, 0);
+    }
+}
+
+// Draws both eyes into the side-by-side target. The scene is sized from the
+// window: u is a tenth of its height; the back wall is 3u behind the glass,
+// the cube sits on the glass, the spheres stand 2.5u behind to 2u in front.
+void RenderSceneViews(const SRB_SceneParams& p, const SRB_SceneInfo& info, FXMVECTOR el, FXMVECTOR er)
+{
+    ID3D11DeviceContext* c = g.ctx;
+    const float bg[4] = { 0.02f, 0.02f, 0.04f, 1.0f };
+    c->OMSetRenderTargets(1, &gs.rtv, gs.dsv);
+    c->ClearRenderTargetView(gs.rtv, bg);
+    c->ClearDepthStencilView(gs.dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    c->IASetInputLayout(gs.layout);
+    c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    c->VSSetShader(gs.vs, nullptr, 0);
+    c->PSSetShader(gs.ps, nullptr, 0);
+    c->VSSetConstantBuffers(0, 1, &gs.cb);
+    c->PSSetConstantBuffers(0, 1, &gs.cb);
+    c->RSSetState(gs.rs);
+    c->OMSetDepthStencilState(nullptr, 0);
+    c->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+
+    const float cx = info.windowCenterX, cy = info.windowCenterY;
+    const float ww = info.windowWidth, wh = info.windowHeight;
+    const float u = wh / 10.0f;
+    const float rot = p.rotation;
+    struct Ball { float x, y, z, r; XMFLOAT4 col; };
+    const Ball balls[4] = {
+        { -3.5f,  1.5f,  2.0f, 0.8f, { 0.90f, 0.15f, 0.15f, 1 } },   // red, in front
+        {  2.2f,  2.4f,  1.0f, 0.6f, { 0.20f, 0.40f, 0.95f, 1 } },   // blue, in front
+        {  3.6f, -1.2f, -1.5f, 0.9f, { 0.15f, 0.80f, 0.25f, 1 } },   // green, behind
+        { -2.6f, -2.4f, -2.5f, 0.7f, { 0.95f, 0.85f, 0.15f, 1 } },   // yellow, further behind
+    };
+
+    for (int eye = 0; eye < 2; ++eye) {
+        D3D11_VIEWPORT vp{ static_cast<float>(eye * gs.viewW), 0.0f, static_cast<float>(gs.viewW),
+                           static_cast<float>(gs.viewH), 0.0f, 1.0f };
+        c->RSSetViewports(1, &vp);
+        XMVECTOR E = eye == 0 ? el : er;
+        const float ex = XMVectorGetX(E), ey = XMVectorGetY(E), ez = std::max(XMVectorGetZ(E), 50.0f);
+        const float n = 10.0f, f = ez + 5000.0f;
+        // Off-axis frustum through the window's edges, seen from this eye
+        const float l = (cx - ww * 0.5f - ex) * n / ez, r = (cx + ww * 0.5f - ex) * n / ez;
+        const float b = (cy - wh * 0.5f - ey) * n / ez, t = (cy + wh * 0.5f - ey) * n / ez;
+        const XMMATRIX viewProj = XMMatrixTranslation(-ex, -ey, -ez) * XMMatrixPerspectiveOffCenterRH(l, r, b, t, n, f);
+        const XMVECTOR eyePos = XMVectorSet(ex, ey, ez, 1);
+
+        // Back wall and floor
+        DrawSceneMesh(XMMatrixScaling(ww * 3, wh * 3, 1) * XMMatrixTranslation(cx, cy, -3 * u),
+                      { 0.45f, 0.60f, 0.85f, 1 }, viewProj, eyePos, gs.quadVB, nullptr, gs.quadCount);
+        DrawSceneMesh(XMMatrixScaling(ww * 3, 6 * u, 1) * XMMatrixRotationX(-XM_PIDIV2) *
+                      XMMatrixTranslation(cx, cy - 4 * u, 0),
+                      { 0.35f, 0.35f, 0.38f, 1 }, viewProj, eyePos, gs.quadVB, nullptr, gs.quadCount);
+        // The cube, turning, on the glass
+        DrawSceneMesh(XMMatrixScaling(2 * u, 2 * u, 2 * u) * XMMatrixRotationY(rot) * XMMatrixRotationX(rot * 0.6f) *
+                      XMMatrixTranslation(cx, cy, 0),
+                      { 0.95f, 0.55f, 0.15f, 1 }, viewProj, eyePos, gs.cubeVB, nullptr, gs.cubeCount);
+        for (const Ball& bl : balls)
+            DrawSceneMesh(XMMatrixScaling(bl.r * u, bl.r * u, bl.r * u) *
+                          XMMatrixTranslation(cx + bl.x * u, cy + bl.y * u, bl.z * u),
+                          bl.col, viewProj, eyePos, gs.sphereVB, gs.sphereIB, gs.sphereIndexCount);
+    }
+    c->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
 } // namespace
 
 // ===========================================================================
@@ -785,13 +1385,29 @@ SRB_API int32_t srb_Initialize(void* parentWnd, double timeoutSeconds)
     if (!LoadSRApi()) return SRB_E_SR_DLL_MISSING;
 
     g.parent = parent;
-    if (!CreateChildWindow(parent)) return Fail(SRB_E_WINDOW, "Could not create child window");
-    if (!CreateD3D()) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return Fail(SRB_E_D3D, "Direct3D 11 initialisation failed"); }
+    g.ownChild = !g.weaveOnParent;
+    if (g.ownChild) {
+        if (!CreateChildWindow(parent)) return Fail(SRB_E_WINDOW, "Could not create child window");
+    } else {
+        // As Leia's samples: the swap chain and weaver on the program's own
+        // window. Nothing else may present to it.
+        g.child = parent;
+        RECT cr{};
+        GetClientRect(parent, &cr);
+        g.bbW = std::max<int>(1, cr.right - cr.left);
+        g.bbH = std::max<int>(1, cr.bottom - cr.top);
+        g.x = 0; g.y = 0;
+    }
+    auto dropWindow = []() { if (g.ownChild && g.child) DestroyWindow(g.child); g.child = nullptr; };
+    if (!CreateD3D()) { DestroyD3D(); dropWindow(); return Fail(SRB_E_D3D, "Direct3D 11 initialisation failed"); }
 
-    BLog("child window %p, D3D device %p, swap chain %p (%s)", (void*)g.child, (void*)g.dev, (void*)g.swap,
+    BLog("%s %p, %d x %d, D3D device %p, swap chain %p (%s)",
+         g.ownChild ? "child window" : "weaving into the parent window itself", (void*)g.child,
+         g.bbW, g.bbH, (void*)g.dev, (void*)g.swap,
          g.flipModel ? "flip model, FLIP_DISCARD" : "bitblt model, DISCARD, as Leia's samples");
+    CreateParentSwapChain();
     int rc = CreateSR(timeoutSeconds);
-    if (rc != SRB_OK) { DestroyD3D(); DestroyWindow(g.child); g.child = nullptr; return rc; }
+    if (rc != SRB_OK) { DestroyD3D(); dropWindow(); return rc; }
 
     g.initialized = true;
     BLog("srb_Initialize done");
@@ -804,7 +1420,8 @@ SRB_API void srb_Finalize(void)
     BLog("srb_Finalize");
     try { TearDownSR(); } catch (...) { g.weaver = nullptr; g.srContext = nullptr; }          // weaver before context, context before D3D
     DestroyD3D();
-    if (g.child) { DestroyWindow(g.child); g.child = nullptr; }
+    if (g.child && g.ownChild) DestroyWindow(g.child);
+    g.child = nullptr;
     {
         std::lock_guard<std::mutex> lock(g.evMutex);
         g.events.clear();
@@ -818,6 +1435,16 @@ SRB_API int32_t srb_IsWeaving(void)     { return (g.initialized && g.weaver) ? 1
 SRB_API int32_t srb_SetBounds(int32_t x, int32_t y, int32_t width, int32_t height)
 {
     if (!g.initialized) return SRB_E_NOT_INITIALIZED;
+    if (!g.ownChild) {
+        // Weaving into the parent: it is placed by its owner; only the back
+        // buffer follows its client size.
+        if (width < 1 || height < 1) return SRB_OK;
+        if (width != g.bbW || height != g.bbH) {
+            BLog("back buffer %d x %d -> %d x %d (parent window)", g.bbW, g.bbH, width, height);
+            if (!ResizeBackBuffer(width, height)) return Fail(SRB_E_D3D, "ResizeBuffers failed");
+        }
+        return SRB_OK;
+    }
     if (width < 1 || height < 1) { ShowWindow(g.child, SW_HIDE); return SRB_OK; }
     if (x != g.x || y != g.y || width != g.bbW || height != g.bbH || !IsWindowVisible(g.child) != !g.visible) {
         SetWindowPos(g.child, HWND_TOP, x, y, width, height,
@@ -832,7 +1459,7 @@ SRB_API int32_t srb_SetBounds(int32_t x, int32_t y, int32_t width, int32_t heigh
 SRB_API void srb_SetVisible(int32_t visible)
 {
     g.visible = visible != 0;
-    if (g.child) ShowWindow(g.child, g.visible ? SW_SHOWNA : SW_HIDE);
+    if (g.child && g.ownChild) ShowWindow(g.child, g.visible ? SW_SHOWNA : SW_HIDE);
 }
 
 SRB_API int32_t srb_GetDisplayInfo(SRB_DisplayInfo* info)
@@ -858,36 +1485,8 @@ SRB_API int32_t srb_GetWindowRectMM(double* centerX, double* centerY, double* wi
 {
     if (!centerX || !centerY || !width || !height) return SRB_E_ARGS;
     if (!g.initialized || !g.display) return SRB_E_NOT_INITIALIZED;
-
-    RECT wr{};
-    GetWindowRect(g.child, &wr);
-    MONITORINFO mi{ sizeof(mi) };
-    if (g.displayRectValid)
-        mi.rcMonitor = g.displayRect;   // the SR panel, wherever the window is
-    else
-        GetMonitorInfoW(MonitorFromWindow(g.child, MONITOR_DEFAULTTONEAREST), &mi);
-    const double monW = static_cast<double>(mi.rcMonitor.right - mi.rcMonitor.left);
-    const double monH = static_cast<double>(mi.rcMonitor.bottom - mi.rcMonitor.top);
-    if (monW <= 0 || monH <= 0) return SRB_E_ARGS;
-
     SRB_ENTRY;
-    double mmPerPxX = 0, mmPerPxY = 0;
-    try {
-        mmPerPxX = g.api.getPhysicalSizeWidth(g.display)  * 10.0 / monW;
-        mmPerPxY = g.api.getPhysicalSizeHeight(g.display) * 10.0 / monH;
-    } catch (...) { g.contextInvalid = true; return Fail(SRB_E_NO_DISPLAY, "SR display query failed"); }
-    if (mmPerPxX <= 0 || mmPerPxY <= 0) return SRB_E_NO_DISPLAY;
-
-    const double monCx = (mi.rcMonitor.left + mi.rcMonitor.right) * 0.5;
-    const double monCy = (mi.rcMonitor.top + mi.rcMonitor.bottom) * 0.5;
-    const double winCx = (wr.left + wr.right) * 0.5;
-    const double winCy = (wr.top + wr.bottom) * 0.5;
-
-    *centerX = (winCx - monCx) * mmPerPxX;
-    *centerY = -(winCy - monCy) * mmPerPxY;       // y up
-    *width   = (wr.right - wr.left) * mmPerPxX;
-    *height  = (wr.bottom - wr.top) * mmPerPxY;
-    return SRB_OK;
+    return WindowRectMM(*centerX, *centerY, *width, *height);
 }
 
 SRB_API int32_t srb_GetEyePositions(float* left, float* right)
@@ -915,64 +1514,12 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
     const bool trace = g_submitTrace > 0;
     if (trace) { g_submitTrace--; BLog("submit: %d x %d per eye, pitch %d, format %d", viewWidth, viewHeight, pitch, pixelFormat); }
     try {
-
-    // Recover from SR context loss (e.g. SR service restart), at most every 3 s
-    // (each attempt may block briefly while connecting to the SR service).
-    if (g.contextInvalid || !g.weaver) {
-        ULONGLONG now = GetTickCount64();
-        if (now - g.lastReinitTick > 3000) {
-            g.lastReinitTick = now;
-            BLog("re-creating SR (context invalid %d, weaver %p)", g.contextInvalid ? 1 : 0, (void*)g.weaver);
-            TearDownSR();
-            g.stats.reinitAttempts++;
-            if (CreateSR(0.0) == SRB_OK)   // single non-blocking attempt; on failure we show 2D
-                g.stats.reinitSuccesses++;
-        }
-    }
-
+    RecoverSR();
     if (!EnsureViewTexture(viewWidth, viewHeight, pixelFormat)) return Fail(SRB_E_D3D, "Could not create view texture");
     g.ctx->UpdateSubresource(g.sbsTex, 0, nullptr, pixels, static_cast<UINT>(pitch), 0);
     if (trace) BLog("submit: uploaded");
-
-    if (g.weaver && g.weaverInputDirty) {
-        BLog("setInputViewTexture(%p, %d, %d)", (void*)g.sbsSrv, viewWidth, viewHeight);
-        g.weaver->setInputViewTexture(g.sbsSrv, viewWidth, viewHeight, ViewSrvFormat());
-        g.weaverInputDirty = false;
-    }
-
-    if (!g.rtv) return Fail(SRB_E_D3D, "No render target");
-    const float black[4] = { 0, 0, 0, 1 };
-    g.ctx->OMSetRenderTargets(1, &g.rtv, nullptr);
-    D3D11_VIEWPORT vp{ 0.0f, 0.0f, static_cast<float>(g.bbW), static_cast<float>(g.bbH), 0.0f, 1.0f };
-    g.ctx->RSSetViewports(1, &vp);
-    g.ctx->ClearRenderTargetView(g.rtv, black);
-
-    if (g.weaver) {
-        try { g.weaver->weave(); }
-        catch (...) { g.contextInvalid = true; g.stats.exceptions++; BLog("exception in weave()"); }
-        if (trace) BLog("submit: woven");
-    } else {
-        // 2D fallback: show the left view unwoven.
-        ID3D11Texture2D* bb = nullptr;
-        if (pixelFormat == SRB_FMT_BGRA8 &&
-            SUCCEEDED(g.swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb)))) {
-            D3D11_BOX box{ 0, 0, 0, static_cast<UINT>(std::min(viewWidth, g.bbW)), static_cast<UINT>(std::min(viewHeight, g.bbH)), 1 };
-            g.ctx->CopySubresourceRegion(bb, 0, 0, 0, 0, g.sbsTex, 0, &box);
-            bb->Release();
-        }
-    }
-
-    HRESULT hr = g.swap->Present(g.vsync ? 1 : 0, 0);
-    g.stats.framesSubmitted++;
-    g.stats.lastPresentHr = static_cast<int32_t>(hr);
-    if (trace) BLog("submit: presented, hr 0x%08X", static_cast<unsigned>(hr));
-    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
-        return Fail(SRB_E_D3D, "D3D device removed - call srb_Finalize/srb_Initialize");
-    if (hr == DXGI_STATUS_OCCLUDED) { g.stats.framesOccluded++; return SRB_S_OCCLUDED; }
-    if (g.weaver) { g.stats.framesWoven++; return SRB_OK; }
-    g.stats.frames2D++;
-    return SRB_S_2D_FALLBACK;
-
+    SetWeaverInput(g.sbsSrv, viewWidth, viewHeight, ViewSrvFormat());
+    return WeaveAndPresent(g.sbsTex, viewWidth, viewHeight, pixelFormat == SRB_FMT_BGRA8, trace);
     } catch (...) {
         g.contextInvalid = true;
         g.stats.exceptions++;
@@ -981,9 +1528,48 @@ SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t v
     }
 }
 
+SRB_API int32_t srb_RenderScene(const SRB_SceneParams* params, SRB_SceneInfo* info)
+{
+    if (!g.initialized) return SRB_E_NOT_INITIALIZED;
+    if (!params || params->viewWidth < 1 || params->viewHeight < 1) return SRB_E_ARGS;
+    SRB_ENTRY;
+    const bool trace = g_submitTrace > 0;
+    if (trace) { g_submitTrace--; BLog("scene: %d x %d per eye", params->viewWidth, params->viewHeight); }
+    try {
+        RecoverSR();
+        if (!EnsureSceneResources()) return Fail(SRB_E_D3D, "Scene shaders or buffers could not be created (see log)");
+        if (!EnsureSceneTargets(params->viewWidth, params->viewHeight)) return Fail(SRB_E_D3D, "Could not create the scene targets");
+        SRB_SceneInfo si{};
+        DirectX::XMVECTOR el, er;
+        SceneEyes(*params, si, el, er);
+        RenderSceneViews(*params, si, el, er);
+        if (trace) BLog("scene: drawn");
+        if (info) *info = si;
+        SetWeaverInput(gs.srv, params->viewWidth, params->viewHeight, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+        return WeaveAndPresent(gs.tex, params->viewWidth, params->viewHeight, true, trace);
+    } catch (...) {
+        g.contextInvalid = true;
+        g.stats.exceptions++;
+        BLog("exception in srb_RenderScene");
+        return Fail(SRB_S_2D_FALLBACK, "Exception during the scene; will re-create SR context");
+    }
+}
+
 SRB_API void srb_SetVSync(int32_t enabled) { g.vsync = enabled ? 1 : 0; }
 
 SRB_API void srb_SetPresentModel(int32_t flipModel) { g.flipModel = flipModel != 0; }
+
+SRB_API void srb_SetWeaverWindow(int32_t onParent) { g.weaveOnParent = onParent != 0; }
+
+SRB_API void srb_SetAdapterChoice(int32_t choice) { g.adapterChoice = (choice >= 0 && choice <= 2) ? choice : 0; }
+
+SRB_API void srb_SetParentSwapChain(int32_t mode) { g.parentChain = (mode >= 0 && mode <= 2) ? mode : 0; }
+
+SRB_API void srb_SetReapplyInput(int32_t everyFrame)
+{
+    g.reapplyInput = everyFrame != 0;
+    BLog("weaver input %s", g.reapplyInput ? "given every frame" : "given only when it changes");
+}
 
 SRB_API void srb_SetLatencyInFrames(uint64_t frames)
 {

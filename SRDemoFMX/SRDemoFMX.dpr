@@ -1,25 +1,25 @@
-{ @abstract(SRDemo: a test scene shown on a LeiaSR eye-tracked 3D display.)
+{ @abstract(SRDemoFMX: a test scene shown on a LeiaSR eye-tracked 3D display.)
 
   @unorderedList(
     @item(@link(MainForm) holds the main window, the scene and the log.)
     @item(@link(FMX.SRStereoViewport) in @code(lib) shows the viewport on the
-      SR display, through @link(SRFmxBridge.Api) and the bridge DLL in
+      SR display, through @link(SRBridge.Api) and the bridge DLL in
       @code(dll), copied beside the executable after each build.)
     @item(@link(SimulatedReality.Api) in @code(lib) is the SDK's C API.)
     @item(@link(SRSettings) in @code(lib) keeps the eye separation and the
       demo's choices in @code(%APPDATA%\SRDelphiFMX\settings.json), through
       Neon (a submodule in @code(delphi-neon)).)
-    @item(@link(SRDiagLog) in @code(lib) writes @code(SRDemo.log) beside the
+    @item(@link(SRDiagLog) in @code(lib) writes @code(SRDemoFMX.log) beside the
       executable, line by line, and records native crashes in it. Logs from
       earlier runs are moved into @code(oldlogs) beside it.)
     @item(FastMM5 (a submodule in @code(FastMM5)) is the memory manager. In
       Debug builds it runs in full debug mode when
       @code(FastMM_FullDebugMode64.dll) is beside the executable (the build
-      copies it there), and writes @code(SRDemo_FastMM.log).)
+      copies it there), and writes @code(SRDemoFMX_FastMM.log).)
   )
 
   Build for Windows 64-bit; the SR runtime is 64-bit only. }
-program SRDemo;
+program SRDemoFMX;
 
 uses
   FastMM5 in '..\FastMM5\FastMM5.pas',
@@ -30,7 +30,7 @@ uses
   SRSettings in '..\lib\SRSettings.pas',
   MainForm in 'ui\MainForm.pas' {frmMain},
   FMX.SRStereoViewport in '..\lib\FMX.SRStereoViewport.pas',
-  SRFmxBridge.Api in '..\lib\SRFmxBridge.Api.pas',
+  SRBridge.Api in '..\lib\SRBridge.Api.pas',
   SimulatedReality.Api in '..\lib\SimulatedReality.Api.pas';
 
 {$R *.res}
@@ -46,7 +46,7 @@ begin
 
   FastMMLogName := ChangeFileExt(ParamStr(0), '_FastMM.log');
   FastMM_SetEventLogFilename(PWideChar(FastMMLogName));
-  DiagLogArchive(FastMMLogName);   // into oldlogs, like SRDemo.log
+  DiagLogArchive(FastMMLogName);   // into oldlogs, like SRDemoFMX.log
   if FastMM_DebugModeActive then
     DiagLog('FastMM5 full debug mode ON; its events go to ' + FastMMLogName)
   else

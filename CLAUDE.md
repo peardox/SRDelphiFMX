@@ -2,7 +2,134 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file.
 
-## Where to pick up (30 October 2026, 02:15, end of session)
+## Where to pick up (5 November 2026, 03:40)
+
+**Renamed (owner, 03:33 and 03:41), bridge rebuild:** the bridge is
+`SRBridge.dll` (`bridge/SRBridge.cpp/.h`, CMake target `SRBridge`,
+`SRBRIDGE_EXPORTS`, `lib/SRBridge.Api.pas`, `SRBridgeDll = 'SRBridge.dll'`,
+child window class `SRBridgeChildWindow`), and SRDemo is **SRDemoFMX**
+(`SRDemoFMX/SRDemoFMX.dpr/.dproj/.res`, logs `SRDemoFMX.log`, crash-dump
+.reg files). The settings folder stays `SRDelphiFMX` so saved settings are
+kept. In the notes below, "SRDemo" means SRDemoFMX and "SRFmxBridge" the
+bridge, as they were then called.
+
+**SRDemoVCL works** (owner, 03:41; 03:38 log): 440 fps full screen at
+3840 x 2160 per eye, worst frame 3-4 ms (SRDemoFMX: 32-41 fps), 36 s full
+screen, no faults. To do: cap the frame rate (Present(1) on the bitblt
+chain is not throttling it; 440 fps wastes the laptop's GPU).
+
+**The full-screen fault is gone** (owner, 03:22; 03:11 SRDemo log): three
+full screens with today's bridge, one 56 s, no break. Most likely the
+adapter choice (the bridge now puts its device on the RTX 5090 that drives
+the SR display; every broken run was with a bridge on Windows' default
+adapter). SRFullScreenTest never broke in any configuration. The
+diagnostics (`FullScreenPlain`, the stand-ins, P/E/K/F/T/H keys) can go
+once the owner agrees; nothing removed yet.
+
+**SRDemoVCL delivered (bridge rebuild)**, owner's request ("FMX is slower
+than VCL in areas"); owner chose the native D3D11 scene. VCL has no 3D, so
+the bridge draws the scene: `srb_RenderScene(SRB_SceneParams*,
+SRB_SceneInfo*)` renders both eyes into a side-by-side B8G8R8A8 typeless
+target (sRGB RTV/SRV) with a D24 depth buffer, off-axis frustum per eye
+from the predicted eyes and `WindowRectMM` (mm, display centre, y up, glass
+z = 0), shaders compiled at first use with `D3DCompile` (CMake links
+d3dcompiler). Eye rules as SRDemo: nominal (0, 100, 600) -> default viewer
+650 mm in front; separation outside 45-85 -> 63; fixed separation; depth
+scale; look-around off -> fixed viewer; flat for lens off. The bridge's
+submit path was split into `RecoverSR`, `SetWeaverInput` (tracks which SRV
+the weaver has) and `WeaveAndPresent`, shared by both calls. VCL form
+built in code (`SRDemoVCL/ui/MainFormVCL.pas`, tiny dfm), viewport is a
+`TPanel` that is the bridge's parent; settings shared with SRDemo.
+Not compiled or run yet: expect a first round of compile fixes (C++ and
+Delphi).
+
+## Before that (5 November 2026, 03:20)
+
+**Owner, 02:59: everything passed**, `/eyes` and latency 1-4 included. So
+SRFullScreenTest never breaks with anything the weaver is asked. Left
+between it and SRDemo: the pixel format (SRDemo submits RGBA8 when FMX's
+surface is RGBA; the bridge then uses an R8G8B8A8 texture), the taskbar
+mark and the hold subclass (each was only ever removed one at a time in
+SRDemo), the keyboard hook (unlikely), and FMX itself. Delivered (no bridge
+rebuild): F (`/rgba`), T (`/mark`), H (`/hold`). Also ask for the `submit:
+... format N` line from any SRDemo log: 1 means RGBA.
+
+## Before that (5 November 2026, 03:10)
+
+**02:51 log: `/fs /parent=2` (flip-model FMX stand-in) held 28 s**, owner
+marked GOOD at 15.9 s. Windows went BUSY (full screen) 0.2 s in and nothing
+broke, so Windows' full-screen detection is not the trigger. 230-256 fps.
+02:52 log: `/fs /parent=1` (bitblt stand-in) held 30 s too, GOOD at
+26.7 s. So a second swap chain on the parent, either model, is not it.
+
+Next suspect: SRDemo calls `srb_GetEyePositions` (the weaver's
+`getPredictedEyePositions`) and `srb_GetWindowRectMM` every frame, even
+showing a stereo image with rendering skipped; the test never did. Also
+SRDemo's saved latency. Delivered (no bridge rebuild): E (`/eyes`) does
+the same queries every frame, K (`/latency=`) sets the latency. Quick
+check in SRDemo itself, no build: Skip tracking (stops the eye query) with
+beer.jpg and Skip rendering, full screen.
+
+## Before that (5 November 2026, 03:00)
+
+**SRFullScreenTest baseline does NOT break** (owner, 02:38): `/fs`, child
+window, window-size views, about 20 s plus F11 off and on. So the fault
+needs something SRDemo's window has. Old tests had already ruled out the
+lens, the marking, the hold and the frame rate one by one, and SRDemo opens
+no second SR context. What was there in every broken run: FMX's own swap
+chain on the form, covering the display in full screen (a candidate for
+Windows' direct scan-out after a few seconds; our child's swap chain
+model made no difference because it was never ours being promoted).
+
+Delivered (**bridge rebuild**): `srb_SetParentSwapChain` (0 none, 1
+bitblt, 2 flip): a second swap chain on the parent window, cleared to grey
+and presented (no vsync) before each weave, as FMX's. SRFullScreenTest: P
+key, `/parent=`. Ask: `/fs /parent=2`, then `/fs /parent=1`, B when it
+breaks. If either breaks, the fix for SRDemo is to stop FMX's form chain
+covering the display in full screen (or make it ineligible for direct
+scan-out), or weave into the form's window without FMX drawing there.
+
+## Before that (5 November 2026, 02:00)
+
+Delivered: **SRFullScreenTest** (step 2 of the 30 October plan below), and
+the bridge options it needs (**bridge rebuild**). Nothing run yet.
+
+- `SRFullScreenTest/`: a plain Win32 window (no FMX, no 3D) weaving a
+  stereo image, full screen exactly as Leia's DX11 sample (Raymond Chen's
+  method on the SR display's rectangle, nothing held, nothing marked).
+  Everything that SRDemo's FMX window adds is gone: FMX re-sizing, the
+  hold subclass, `ITaskbarList2`, the lens switching. Window in `ui/`,
+  `lib/SRStereoImage.pas` loads the images (WIC through VCL graphics, GDI
+  halftone scaling) or draws a numbered test pattern. Keys and switches are
+  in the README.
+- Bridge: `srb_SetWeaverWindow(1)` puts the swap chain and weaver on the
+  parent window itself, as the samples (no child window; `srb_SetBounds`
+  only sizes the back buffer; `srb_GetWindowRectMM` now measures the
+  client area, the same for the child). Not usable from SRDemo: FMX draws
+  into its form. `srb_SetAdapterChoice` (0 most memory, 1 default, 2 the
+  adapter driving the parent's monitor). `srb_SetReapplyInput(1)` calls
+  `setInputViewTexture` before every weave: if the weaver loses its input
+  layout a few seconds into full screen, this would hide it. Delphi side:
+  `SRBridgeHasExport` checks for the new exports, so an older DLL still runs.
+- New in the log: `SHQueryUserNotificationState` on change (2 = BUSY
+  means Windows has decided a full-screen program is running; the time
+  since full screen came on is logged with it), foreground changes, every
+  window move, and B / G marks typed by the owner when it breaks or
+  recovers.
+
+What to ask the owner to run, in order (one log each):
+1. `SRFullScreenTest /fs` as it is (child window, window-size views):
+   does the fault reproduce without FMX? Press B when it breaks. Compare
+   the break time with the notification-state line.
+2. If it breaks: W (weave into the window), then V (recommended views),
+   then R, then A, one at a time, F11 off and on after each.
+3. If it does not break in 1, the fault is in SRDemo's window handling
+   (FMX, the hold subclass, `ITaskbarList2`, the lens switching): add them
+   to the test one at a time.
+Step 1 of the old plan (Leia's own sample full screen) is still worth doing
+alongside.
+
+## Earlier: where to pick up (30 October 2026, 02:15)
 
 ### What works (owner, on the hardware)
 
@@ -486,9 +613,9 @@ The stop hook's "commit and push" prompt: do not answer it with an
 explanation; the owner knows changes are left for them to apply and push. Say
 nothing more than "Noted." if a reply is needed.
 
-The compiled bridge is committed in `dll/SRFmxBridge.dll`. Building the bridge
+The compiled bridge is committed in `dll/SRBridge.dll`. Building the bridge
 with CMake overwrites that file (a post-build step in `bridge/CMakeLists.txt`),
-and SRDemo's post-build step copies it next to the exe. Whenever a delivery
+and every project's post-build step copies it next to the exe. Whenever a delivery
 changes anything in `bridge/`, say plainly that the bridge must be rebuilt. Supply whole files in a zip of changed files only, with paths from the repository root. Logs are the main evidence, so make log lines say exactly what happened.
 
 ## Design notes

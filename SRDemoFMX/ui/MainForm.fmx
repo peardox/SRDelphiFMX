@@ -1,7 +1,7 @@
 object frmMain: TfrmMain
   Left = 0
   Top = 0
-  Caption = 'SRDemo'
+  Caption = 'SRDemoFMX'
   ClientHeight = 900
   ClientWidth = 1600
   FormFactor.Width = 320

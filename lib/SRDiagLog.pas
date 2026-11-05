@@ -24,7 +24,7 @@ procedure DiagLogOpen(const FileName: string);
 
 { Moves a log file left by an earlier run into an @code(oldlogs) folder
   beside it, named with the time it was last written (for example
-  @code(oldlogs\SRDemo_20261029_222023.log)), and deletes all but the newest
+  @code(oldlogs\SRDemoFMX_20261029_222023.log)), and deletes all but the newest
   @link(OldLogsKept) logs of the same name there. Does nothing if the file
   does not exist.
   @param(FileName full path of the log file) }
@@ -50,7 +50,7 @@ function DiagLogFileName: string;
   unhandled-exception filter that logs the exception that ends the program. }
 procedure DiagLogInstallCrashHandlers;
 
-{ Sends SRFmxBridge.dll's log lines to this log, if the DLL can be loaded.
+{ Sends SRBridge.dll's log lines to this log, if the DLL can be loaded.
   @returns(@true if attached) }
 function DiagLogAttachBridge: Boolean;
 
@@ -58,7 +58,7 @@ implementation
 
 uses
   Winapi.Windows, System.SysUtils, System.Classes, System.SyncObjs, System.IOUtils,
-  SRFmxBridge.Api;
+  SRBridge.Api;
 
 type
   { The Win64 @code(EXCEPTION_RECORD), declared here so it cannot be confused
@@ -238,7 +238,7 @@ end;
 
 { Describes an address as module+offset.
   @param(Address the address)
-  @returns(text such as SRFmxBridge.dll+$1A2B) }
+  @returns(text such as SRBridge.dll+$1A2B) }
 function DescribeAddress(Address: Pointer): string;
 var
   Module: HMODULE;

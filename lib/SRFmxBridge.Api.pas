@@ -125,6 +125,55 @@ type
   { Pointer to a @link(TSRBStats). }
   PSRBStats = ^TSRBStats;
 
+  { What to draw with @link(srb_RenderScene). Matches @code(SRB_SceneParams)
+    in @code(SRFmxBridge.h): 32 bytes. }
+  TSRBSceneParams = record
+    { Width of each eye's view in pixels. }
+    viewWidth: Int32;
+    { Height of each eye's view in pixels. }
+    viewHeight: Int32;
+    { The cube's turn in radians. }
+    rotation: Single;
+    { Eye separation in millimetres, 0 for the tracked one. }
+    eyeSeparationMM: Single;
+    { Scale of the eye separation about the midpoint (depth); 1 is real, 0
+      means 1. }
+    depthScale: Single;
+    { 0 draws from a fixed viewer 650 mm in front of the window's centre. }
+    lookAround: Int32;
+    { 1 draws both eyes from the midpoint: a 2D picture, for the lens off. }
+    flat: Int32;
+    { Padding. }
+    reserved: Int32;
+  end;
+  { Pointer to a @link(TSRBSceneParams). }
+  PSRBSceneParams = ^TSRBSceneParams;
+
+  { What @link(srb_RenderScene) drew from. Matches @code(SRB_SceneInfo):
+    48 bytes. }
+  TSRBSceneInfo = record
+    { The left eye drawn from, millimetres from the display's centre, x
+      right, y up, z towards the viewer. }
+    leftEye: array[0..2] of Single;
+    { The right eye drawn from. }
+    rightEye: array[0..2] of Single;
+    { The window's centre on the display, x, millimetres. }
+    windowCenterX: Single;
+    { The window's centre on the display, y, millimetres. }
+    windowCenterY: Single;
+    { The window's width in millimetres. }
+    windowWidth: Single;
+    { The window's height in millimetres. }
+    windowHeight: Single;
+    { 1 when the tracker had no eyes yet and a default viewer was used. }
+    nominalEyes: Int32;
+    { 1 when the tracked separation was outside 45-85 mm and 63 mm was
+      used. }
+    separationRebuilt: Int32;
+  end;
+  { Pointer to a @link(TSRBSceneInfo). }
+  PSRBSceneInfo = ^TSRBSceneInfo;
+
   { Receives one zero-terminated UTF-8 log line from the bridge, on any
     thread; see @link(srb_SetLogCallback). }
   TSRBLogCallback = procedure(Line: PAnsiChar); cdecl;
@@ -172,12 +221,46 @@ function srb_GetEyePositions(var left, right: TSRBVec3): Int32; cdecl; external 
     negative error code) }
 function srb_SubmitViews(pixels: Pointer; viewWidth, viewHeight, pitch, pixelFormat: Int32): Int32;
   cdecl; external SRBridgeDll delayed;
+{ Draws the bridge's own 3D scene (a back wall, a floor, a turning cube on
+  the glass and four spheres in front of and behind it) for both eyes
+  straight into a view texture on the GPU, with an off-axis projection per
+  eye, then weaves and presents. No pixels pass through the program. Not in
+  bridges built before 5 November 2026, 03:30: check with
+  @link(SRBridgeHasExport).
+  @param(params what to draw)
+  @param(info receives the eyes and window used; may be nil)
+  @returns(as @link(srb_SubmitViews)) }
+function srb_RenderScene(params: PSRBSceneParams; info: PSRBSceneInfo): Int32; cdecl;
+  external SRBridgeDll delayed;
 { Turns waiting for the vertical blank on (1) or off (0). }
 procedure srb_SetVSync(enabled: Int32); cdecl; external SRBridgeDll delayed;
 { Chooses the swap chain model for the next @link(srb_Initialize): 0 (the
   default) the bitblt model, as Leia's samples use; 1 the flip model. Not in
   bridges built before 30 October 2026: call it only to choose 1. }
 procedure srb_SetPresentModel(flipModel: Int32); cdecl; external SRBridgeDll delayed;
+{ Chooses the window to weave into for the next @link(srb_Initialize): 0 (the
+  default) the bridge's own child window over the viewport; 1 the parent
+  window itself, as Leia's samples do. Then the swap chain covers the
+  parent's whole client area, @link(srb_SetBounds) only sizes the back
+  buffer, and nothing else may draw into that window (so not an FMX form).
+  Not in bridges built before 5 November 2026: check with
+  @link(SRBridgeHasExport). }
+procedure srb_SetWeaverWindow(onParent: Int32); cdecl; external SRBridgeDll delayed;
+{ Chooses the adapter for the next @link(srb_Initialize): 0 (the default) the
+  one with the most dedicated memory, as Leia's 1.36 sample; 1 the default
+  adapter; 2 the one driving the monitor the parent window is on. Not in
+  bridges built before 5 November 2026: check with @link(SRBridgeHasExport). }
+procedure srb_SetAdapterChoice(choice: Int32); cdecl; external SRBridgeDll delayed;
+{ 1 gives the weaver its input view texture before every weave, not only when
+  the texture changes; a diagnostic, 0 by default. Not in bridges built
+  before 5 November 2026: check with @link(SRBridgeHasExport). }
+procedure srb_SetReapplyInput(everyFrame: Int32); cdecl; external SRBridgeDll delayed;
+{ A diagnostic for the next @link(srb_Initialize): a second swap chain on the
+  parent window, cleared and presented every frame before the weave, as
+  FMX's own swap chain on its form: 0 (the default) none, 1 bitblt model,
+  2 flip model. Only with the child window. Not in bridges built before
+  5 November 2026, 03:00: check with @link(SRBridgeHasExport). }
+procedure srb_SetParentSwapChain(mode: Int32); cdecl; external SRBridgeDll delayed;
 { Tells the weaver how many frames the rendering pipeline takes. }
 procedure srb_SetLatencyInFrames(frames: UInt64); cdecl; external SRBridgeDll delayed;
 { Asks for the lens to be on (1) or off (0). }
@@ -203,6 +286,13 @@ procedure srb_SetDllDirectory(path: PWideChar); cdecl; external SRBridgeDll dela
 { Loads SRFmxBridge.dll from the executable's folder or the search path.
   @returns(@true if it could be loaded; always @false in a 32-bit build) }
 function SRBridgeAvailable: Boolean;
+
+{ Whether the loaded bridge exports a function, for exports added after the
+  first release, which an older DLL lacks (calling one would raise an
+  exception).
+  @param(Name the export's name, such as @code('srb_SetWeaverWindow'))
+  @returns(@true if the DLL is loaded and has it) }
+function SRBridgeHasExport(const Name: string): Boolean;
 
 { The bridge's last error, or why the DLL could not be loaded.
   @returns(a readable message) }
@@ -234,6 +324,11 @@ begin
 {$ELSE}
   Result := False;
 {$ENDIF}
+end;
+
+function SRBridgeHasExport(const Name: string): Boolean;
+begin
+  Result := SRBridgeAvailable and (GetProcAddress(BridgeHandle, PChar(Name)) <> nil);
 end;
 
 function SRBridgeLastError: string;

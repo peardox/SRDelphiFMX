@@ -105,11 +105,11 @@ type
       the viewport, keeping depth but not the look-around. }
     property LookAround: Boolean read FLookAround write FLookAround;
 
-    { File name (without folder) of the media image SRDemo last showed;
+    { File name (without folder) of the media image SRDemoFMX last showed;
       empty for the 3D scene. }
     property StereoImage: string read FStereoImage write FStereoImage;
 
-    { Whether SRDemo was last full screen. }
+    { Whether SRDemoFMX was last full screen. }
     property FullScreen: Boolean read FFullScreen write FFullScreen;
 
     { When the display's lens is on: 0 off while the pointer is over the

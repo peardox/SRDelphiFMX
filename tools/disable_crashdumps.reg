@@ -2,4 +2,4 @@ REGEDIT4
 
 ; Removes the crash dump setting made by enable_crashdumps.reg.
 
-[-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\SRDemo.exe]
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\SRDemoFMX.exe]

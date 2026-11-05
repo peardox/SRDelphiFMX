@@ -6,7 +6,7 @@
   predicted eye positions, renders the viewport's 3D children once per eye
   into the viewport's own context with an off-axis (window) projection,
   copies both images side by side into one buffer, and hands that to
-  SRFmxBridge.dll (@link(SRFmxBridge.Api)), which weaves it for the lens in a
+  SRBridge.dll (@link(SRBridge.Api)), which weaves it for the lens in a
   native child window placed exactly over the viewport.
 
   The viewport's current camera is the reference: the plane
@@ -25,7 +25,7 @@ uses
   Winapi.Windows,
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   System.Math.Vectors, System.Diagnostics, FMX.Types, FMX.Types3D, FMX.Controls3D,
-  FMX.Viewport3D, FMX.Forms, FMX.Graphics, SRFmxBridge.Api;
+  FMX.Viewport3D, FMX.Forms, FMX.Graphics, SRBridge.Api;
 
 type
   { How @link(TSRStereoRenderer) drives its frames. }

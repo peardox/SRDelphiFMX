@@ -1,5 +1,5 @@
 /*
- * SRFmxBridge - flat C wrapper around the LeiaSR (Simulated Reality) DX11 weaver,
+ * SRBridge - flat C wrapper around the LeiaSR (Simulated Reality) DX11 weaver,
  * intended to be called from Delphi (or any language with a C FFI).
  *
  * Why this exists: the SR weaver API (SR::CreateDX11Weaver / SR::IDX11Weaver1) is
@@ -16,7 +16,7 @@
 
 #include <stdint.h>
 
-#ifdef SRFMXBRIDGE_EXPORTS
+#ifdef SRBRIDGE_EXPORTS
 #  define SRB_API extern "C" __declspec(dllexport)
 #else
 #  ifdef __cplusplus
@@ -82,6 +82,29 @@ typedef struct {
     int32_t  reserved;
 } SRB_Stats;
 
+/* The native scene (srb_RenderScene). */
+typedef struct {
+    int32_t viewWidth;        /* per eye, pixels */
+    int32_t viewHeight;
+    float   rotation;         /* the cube's turn, radians */
+    float   eyeSeparationMM;  /* 0: as tracked */
+    float   depthScale;       /* eye separation scale about the midpoint; 1 real, 0 means 1 */
+    int32_t lookAround;       /* 0: a fixed viewer 650 mm in front of the window centre */
+    int32_t flat;             /* 1: both eyes at the midpoint (a 2D picture, for the lens off) */
+    int32_t reserved;
+} SRB_SceneParams;
+
+typedef struct {
+    float   leftEye[3];       /* the eyes drawn from, mm, display centre, x right, y up, z out */
+    float   rightEye[3];
+    float   windowCenterX;    /* the window on the display, mm */
+    float   windowCenterY;
+    float   windowWidth;
+    float   windowHeight;
+    int32_t nominalEyes;      /* 1: no tracked eyes yet; a default viewer was used */
+    int32_t separationRebuilt;/* 1: tracked separation outside 45-85 mm, 63 mm used */
+} SRB_SceneInfo;
+
 /* Create SR context (retrying up to timeoutSeconds), D3D11 device, a child window
  * of parentWnd and the weaver. Safe to call again after srb_Finalize. */
 SRB_API int32_t srb_Initialize(void* parentWnd, double timeoutSeconds);
@@ -117,10 +140,35 @@ SRB_API int32_t srb_GetEyePositions(float* left, float* right);
 SRB_API int32_t srb_SubmitViews(const void* pixels, int32_t viewWidth, int32_t viewHeight,
                                 int32_t pitch, int32_t pixelFormat);
 
+/* Draws the bridge's own 3D scene (back wall, floor, a turning cube on the
+   glass, four spheres in front of and behind it) for both eyes straight into
+   a view texture on the GPU, with an off-axis projection per eye from the
+   tracked eyes and the window's place on the display, then weaves and
+   presents. No pixels pass through the caller. info (may be NULL) receives
+   the eyes and window used. Returns as srb_SubmitViews. */
+SRB_API int32_t srb_RenderScene(const SRB_SceneParams* params, SRB_SceneInfo* info);
+
 SRB_API void    srb_SetVSync(int32_t enabled);
 /* Swap chain model for the next srb_Initialize: 0 (default) bitblt DISCARD, as
    Leia's samples; 1 flip model (FLIP_DISCARD), the bridge's only model before 30 October 2026. */
 SRB_API void    srb_SetPresentModel(int32_t flipModel);
+/* Window to weave into for the next srb_Initialize: 0 (default) the bridge's
+   own child window over the viewport; 1 the parent window itself, as Leia's
+   samples (the swap chain covers its whole client area, srb_SetBounds only
+   sizes the back buffer, and nothing else may draw into the window). */
+SRB_API void    srb_SetWeaverWindow(int32_t onParent);
+/* Adapter for the next srb_Initialize: 0 (default) the one with the most
+   dedicated memory, as Leia's 1.36 sample; 1 the default adapter; 2 the one
+   driving the monitor the parent window is on. */
+SRB_API void    srb_SetAdapterChoice(int32_t choice);
+/* 1: give the weaver its input view texture before every weave, not only
+   when the texture changes. A diagnostic; default 0. */
+SRB_API void    srb_SetReapplyInput(int32_t everyFrame);
+/* A diagnostic for the next srb_Initialize: a second swap chain on the
+   parent window, cleared and presented every frame before the weave, as
+   FMX's own swap chain on its form. 0 (default) none, 1 bitblt model,
+   2 flip model. Only with the child window (srb_SetWeaverWindow(0)). */
+SRB_API void    srb_SetParentSwapChain(int32_t mode);
 SRB_API void    srb_SetLatencyInFrames(uint64_t frames);
 SRB_API void    srb_SetLens(int32_t enabled);   /* lens on/off hint */
 

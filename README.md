@@ -10,7 +10,7 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
  TSRStereoRenderer  --CopyToBits-->  side-by-side BGRA buffer
         |
         v  srb_SubmitViews()
- SRFmxBridge.dll (C++, MSVC)
+ SRBridge.dll (C++, MSVC)
    - child window placed exactly over the viewport (mouse passes through)
    - its own Direct3D 11 device and swap chain (bitblt model, as Leia's samples; `FlipModel` switches to the flip model)
    - SR::IDX11Weaver1: weave(), then Present()
@@ -24,24 +24,27 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
 | Path | What |
 |---|---|
 | `SimulatedReality.groupproj` | Project group; open this in the IDE |
-| `SRDemo/` | Test program: `SRDemo.dproj`, `SRDemo.dpr`, and its form in `ui/` |
+| `SRDemoFMX/` | Test program: `SRDemoFMX.dproj`, `SRDemoFMX.dpr`, and its form in `ui/` |
+| `SRDemoVCL/` | The demo as a VCL program: VCL controls, and a 3D scene drawn by the bridge itself on the GPU (`srb_RenderScene`), with no read-back; its form in `ui/` |
+| `SRFullScreenTest/` | Test program for the full-screen fault: a plain Win32 window (no FMX) weaving a stereo image, with each suspect switchable from the keyboard; its window in `ui/` |
+| `lib/SRStereoImage.pas` | Loads a side-by-side image (or draws a numbered test pattern) and fits it into views of any size; no FMX |
 | `lib/` | Units shared by every project (test and real) |
 | `lib/FMX.SRStereoViewport.pas` | `TSRStereoRenderer`, the component |
 | `lib/FMX.SRStereoViewport.Reg.pas` | Registers the component for a design-time package |
-| `lib/SRFmxBridge.Api.pas` | Delphi imports for the bridge DLL |
+| `lib/SRBridge.Api.pas` | Delphi imports for the bridge DLL |
 | `lib/SimulatedReality.Api.pas` | The SDK's C API (context, display, lens, eye/head/weaver trackers, system events) |
 | `lib/SRSettings.pas` | Saved settings (`%APPDATA%\SRDelphiFMX\settings.json`), read and written with Neon |
 | `delphi-neon/` | Neon JSON library (submodule, never changed) |
 | `CREDITS.md` | Licences of everything used |
 | `lib/SRDiagLog.pas` | Crash-proof log file, plus handlers that record native crashes and the bridge's own log lines in it |
 | `FastMM5/` | FastMM5 memory manager (submodule, never changed); full debug mode in Debug builds |
-| `bridge/` | C++ source of `SRFmxBridge.dll` and its CMake build |
+| `bridge/` | C++ source of `SRBridge.dll` and its CMake build |
 | `bridge/sr_stub/` | Stand-in for the SDK's `srcontext.h` that keeps OpenCV out of the bridge |
-| `dll/` | The compiled `SRFmxBridge.dll`. CMake copies it here, and each project's post-build step copies it next to the exe |
+| `dll/` | The compiled `SRBridge.dll`. CMake copies it here, and each project's post-build step copies it next to the exe |
 | `tools/pasdoc_check.py` | Checks the Pascal units follow the PasDoc and layout rules |
-| `tools/enable_crashdumps.reg`, `disable_crashdumps.reg` | Turn Windows crash dumps for SRDemo.exe on and off |
+| `tools/enable_crashdumps.reg`, `disable_crashdumps.reg` | Turn Windows crash dumps for SRDemoFMX.exe on and off |
 
-New programs go in their own folder beside `SRDemo/`, with their forms in a `ui/` folder inside it. Add `..\lib` to the unit search path, copy the post-build event from `SRDemo.dproj`, and add the project to the group.
+New programs go in their own folder beside `SRDemoFMX/`, with their forms in a `ui/` folder inside it. Add `..\lib` to the unit search path, copy the post-build event from `SRDemoFMX.dproj`, and add the project to the group.
 
 ## Why there is a C++ bridge
 
@@ -66,11 +69,11 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DLEIASR_SDKROOT=C:\path\t
 cmake --build build --config Release
 ```
 
-This builds `SRFmxBridge.dll` and copies it to `dll\`. It must be built with MSVC, because the weaver interface depends on the MSVC C++ ABI. `LEIASR_SDKROOT` is the unzipped SDK; its `Install.bat` sets it as an environment variable. If CMake's include paths change, delete `bridge\build` first, because CMake caches them.
+This builds `SRBridge.dll` and copies it to `dll\`. It must be built with MSVC, because the weaver interface depends on the MSVC C++ ABI. `LEIASR_SDKROOT` is the unzipped SDK; its `Install.bat` sets it as an environment variable. If CMake's include paths change, delete `bridge\build` first, because CMake caches them.
 
 ### 2. Delphi (13, FMX, Windows 64-bit)
 
-Open `SimulatedReality.groupproj` and build SRDemo. The project targets Windows 64-bit only, because the SR runtime is 64-bit only. The project's manifest is Per-Monitor v2 DPI aware; without that, Windows scales the window and the woven pattern no longer lines up with the panel's pixels. After each build, `dll\SRFmxBridge.dll` is copied next to the exe. If it isn't there, the build output shows a warning.
+Open `SimulatedReality.groupproj` and build SRDemoFMX. The project targets Windows 64-bit only, because the SR runtime is 64-bit only. The project's manifest is Per-Monitor v2 DPI aware; without that, Windows scales the window and the woven pattern no longer lines up with the panel's pixels. After each build, `dll\SRBridge.dll` is copied next to the exe. If it isn't there, the build output shows a warning.
 
 The SR Platform runtime must be installed, with its service running, and the display connected in extended mode at its native resolution.
 
@@ -118,7 +121,7 @@ The bridge reports where the viewport sits on the panel, in millimetres, in the 
 
 ## The log
 
-With `OnLog` set (SRDemo shows it under the toolbar, with **Copy log** and **Clear log** buttons), the renderer reports:
+With `OnLog` set (SRDemoFMX shows it under the toolbar, with **Copy log** and **Clear log** buttons), the renderer reports:
 
 - **At start:** the SR platform version; the display's resolution, physical size and recommended view size; where the viewport sits on the display in mm; and the settings.
 - **Every `LogInterval`, three lines:**
@@ -129,7 +132,7 @@ With `OnLog` set (SRDemo shows it under the toolbar, with **Copy log** and **Cle
 
 ## Settings
 
-SRDemo keeps its settings in `%APPDATA%\SRDelphiFMX\settings.json`: the eye separation (63 mm by default), the depth scale, the focus distance, look-around, the weaver's latency, the last image shown and full screen. Every change is saved straight away. A missing setting keeps its default. The **Diagnostics** row has the eye separation (0 = as tracked), **Look-around** and **Latency** (SR's default or 1 to 4 frames).
+SRDemoFMX keeps its settings in `%APPDATA%\SRDelphiFMX\settings.json`: the eye separation (63 mm by default), the depth scale, the focus distance, look-around, the weaver's latency, the last image shown and full screen. Every change is saved straight away. A missing setting keeps its default. The **Diagnostics** row has the eye separation (0 = as tracked), **Look-around** and **Latency** (SR's default or 1 to 4 frames).
 
 ## Multiple monitors
 
@@ -137,21 +140,55 @@ At start-up the bridge finds where the SR display is on the desktop and logs it,
 
 ## Finding crashes
 
-A Debug build of SRDemo writes these files beside the exe:
+A Debug build of SRDemoFMX writes these files beside the exe:
 
 | File | Contents |
 |---|---|
-| `SRDemo.log` | Everything SRDemo logs, written line by line so it survives a crash: the renderer's log; the bridge's own steps (prefixed `[bridge tNNNN]` with the thread id), including SR system events as they arrive on SR's threads; `FIRST CHANCE` lines for serious hardware exceptions (access violation, stack overflow, heap corruption...) with the module and offset where they happened; `UNHANDLED` for the exception that ended the program; and `FATAL` lines from the bridge for `abort()`, `std::terminate`, pure virtual calls and CRT invalid parameters. A run that ended normally finishes with `Log closed normally`. |
-| `oldlogs\` | Earlier runs' `SRDemo.log` and `SRDemo_FastMM.log`, named with the time they were last written; the newest 20 of each are kept |
-| `SRDemo_FastMM.log` | FastMM5's reports: corrupted, double-freed or freed-then-used blocks of Delphi memory, with stack traces of where each block was allocated and freed, and leaks at exit. Present only if FastMM found something. |
+| `SRDemoFMX.log` | Everything SRDemoFMX logs, written line by line so it survives a crash: the renderer's log; the bridge's own steps (prefixed `[bridge tNNNN]` with the thread id), including SR system events as they arrive on SR's threads; `FIRST CHANCE` lines for serious hardware exceptions (access violation, stack overflow, heap corruption...) with the module and offset where they happened; `UNHANDLED` for the exception that ended the program; and `FATAL` lines from the bridge for `abort()`, `std::terminate`, pure virtual calls and CRT invalid parameters. A run that ended normally finishes with `Log closed normally`. |
+| `oldlogs\` | Earlier runs' `SRDemoFMX.log` and `SRDemoFMX_FastMM.log`, named with the time they were last written; the newest 20 of each are kept |
+| `SRDemoFMX_FastMM.log` | FastMM5's reports: corrupted, double-freed or freed-then-used blocks of Delphi memory, with stack traces of where each block was allocated and freed, and leaks at exit. Present only if FastMM found something. |
 
 How the pieces help:
 
-- **FastMM5 runs in full debug mode in Debug builds.** The project defines `FastMM_FullDebugModeWhenDLLAvailable`, and the build copies `FastMM_FullDebugMode64.dll` from the submodule next to the exe. The map file is Detailed, so stack traces show units and lines. SRDemo also scans every debug block for corruption every 30 frames, so damage is caught close to when it happens. FastMM5 covers only Delphi's memory, not the bridge's or SR's C++ heaps.
+- **FastMM5 runs in full debug mode in Debug builds.** The project defines `FastMM_FullDebugModeWhenDLLAvailable`, and the build copies `FastMM_FullDebugMode64.dll` from the submodule next to the exe. The map file is Detailed, so stack traces show units and lines. SRDemoFMX also scans every debug block for corruption every 30 frames, so damage is caught close to when it happens. FastMM5 covers only Delphi's memory, not the bridge's or SR's C++ heaps.
 - **Stage tracing.** The renderer traces its first 5 frames stage by stage (`TraceFrames`), so the last line before a crash shows the stage it died in.
-- **Skip switches.** The **Diagnostics** row in SRDemo skips eye tracking, rendering or weaving, to find which stage is at fault without rebuilding.
-- **Stereo images.** **Show:** in the same row weaves one of the side-by-side images from `media/` (left view in the left half) exactly as given, testing the weaving apart from the 3D rendering. **Fixed 63 mm eye separation** (on by default in SRDemo) uses 63 mm, keeping the tracked head position, instead of the tracker's measured separation. Images are letterboxed or pillarboxed in black to keep their shape.
+- **Skip switches.** The **Diagnostics** row in SRDemoFMX skips eye tracking, rendering or weaving, to find which stage is at fault without rebuilding.
+- **Stereo images.** **Show:** in the same row weaves one of the side-by-side images from `media/` (left view in the left half) exactly as given, testing the weaving apart from the 3D rendering. **Fixed 63 mm eye separation** (on by default in SRDemoFMX) uses 63 mm, keeping the tracked head position, instead of the tracker's measured separation. Images are letterboxed or pillarboxed in black to keep their shape.
 - **When the log simply stops**, with no `FIRST CHANCE`, `UNHANDLED` or `FATAL` line, the program ended in a way no handler sees (a fail-fast). Windows still records it: *Event Viewer > Windows Logs > Application*, as an "Application Error" naming the faulting module, exception code and offset. With `tools/enable_crashdumps.reg` imported, Windows also keeps a full dump in `%LOCALAPPDATA%\CrashDumps`.
+
+## SRDemoVCL
+
+VCL has no 3D, so SRDemoVCL's scene (a back wall, a floor, a turning cube on the glass, and four spheres from 2.5 to 2 tenths of the window's height behind and in front of it) is drawn by the bridge: `srb_RenderScene` renders both eyes with Direct3D 11 straight into the view texture, with an off-axis projection per eye from the tracked eyes and the window's place on the display, and weaves it. Nothing is read back to the CPU, so it is much faster than SRDemoFMX's FMX route, which renders each eye in FMX, copies it back and uploads it again. The shaders are compiled when the scene is first drawn (`d3dcompiler_47.dll`, part of Windows 10 and 11).
+
+The toolbar has: Weave (start or stop SR), Show (the 3D scene, the test pattern or a side-by-side image from `media/`), Rotate, Look-around, Depth (the eye separation scaled about the midpoint), Eyes (a fixed separation, or 0 for the tracked one), Views (the viewport's size or half of it) and Lens (off over the controls, always on or always off). F11 is full screen on the SR display, Esc leaves it. The choices are saved with SRDemoFMX's in `%APPDATA%\SRDelphiFMX\settings.json`; `SRDemoVCL.log` and the log panel record what happened, with a summary every 5 seconds.
+
+New scenes for the VCL route are written in the bridge (or would be loaded from a model file there); SRDemoFMX remains the way to show scenes designed in FMX.
+
+## SRFullScreenTest
+
+A plain Win32 window, no FMX and no 3D, showing a woven stereo image on the SR display. It goes full screen exactly as Leia's DX11 sample does (Raymond Chen's method on the SR display's rectangle), so the full-screen fault can be chased one change at a time. Each choice is a key (the window's title shows them all) and a command-line switch:
+
+| Key | Switch | What |
+|---|---|---|
+| F11, Esc | `/fs` | Full screen on and off (Esc only leaves it) |
+| W | `/window` | Weave into the program's own window, as Leia's samples, instead of the bridge's child window. Restarts the bridge |
+| A | `/adapter=0..2` | Adapter: most dedicated memory (the default, as the 1.36 sample), the default adapter, or the one driving the window's monitor. Restarts the bridge |
+| M | `/flip` | Flip-model swap chain instead of bitblt. Restarts the bridge |
+| V | `/rec` | Views at SR's recommended size (1920 x 1080 here) instead of the window's size |
+| R | `/reapply` | Give the weaver its input view texture every frame, not only when it changes |
+| P | `/parent=0..2` | A second swap chain on the program's window, cleared and presented every frame, standing in for FMX's own on its form: none, bitblt or flip model. Child window only. Restarts the bridge |
+| E | `/eyes` | Ask the weaver for the predicted eye positions, and the window's size in mm, every frame, as SRDemoFMX does |
+| K | `/latency=0..4` | Weaver latency: SR's default, then 1 to 4 frames, as SRDemoFMX's Latency box |
+| F | `/rgba` | Submit RGBA pixels instead of BGRA, as SRDemoFMX does when FMX's surface is RGBA |
+| T | `/mark` | Tell the taskbar the window is full screen (`ITaskbarList2`), as SRDemoFMX does |
+| H | `/hold` | Hold the window at the full-screen rectangle (`WM_WINDOWPOSCHANGING` subclass), as SRDemoFMX does |
+| L | `/lensoff` | Lens on or off |
+| N | `/image=beer.jpg` | Next image: the test pattern, then each image in `media/` |
+| B, G | | Write a "broken now" or "good now" mark in the log, with the seconds since full screen came on |
+
+W, A and R need a bridge built on or after 5 November 2026, and P one built after 03:00 that day; with an older DLL the log says so and they do nothing.
+
+The test pattern has ten numbered bands and the eye's name in each view, and a white square in front of the screen, so a view showing the wrong part of an image is easy to describe ("left eye sees 0-4 stretched"). `SRFullScreenTest.log` has every change, every move of the window, Windows' own idea of whether a full-screen program is running (`SHQueryUserNotificationState`, logged when it changes), which window is in the foreground, SR events, and a summary each second.
 
 ## Constraints of this version
 

@@ -4,7 +4,7 @@
   Covers @code(core_c.h), @code(version_c.h), @code(displays_c.h),
   @code(facetrackers_c.h), @code(sr/types.h), @code(systemevent.h),
   @code(eyepair.h), @code(head.h) and @code(weaverposition.h). The weaver is
-  C++ only and is reached through @link(SRFmxBridge.Api) instead; hand
+  C++ only and is reached through @link(SRBridge.Api) instead; hand
   trackers, cameras and the admin API are not translated.
 
   All imports are delayed, so a program using this unit starts on machines

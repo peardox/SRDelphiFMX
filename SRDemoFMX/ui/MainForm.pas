@@ -1,4 +1,4 @@
-{ @abstract(Main window of SRDemo: a test scene on the LeiaSR display, with a
+{ @abstract(Main window of SRDemoFMX: a test scene on the LeiaSR display, with a
   log.)
 
   The scene is built in code so the form file stays trivial. The toolbar and
@@ -542,7 +542,7 @@ end;
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 begin
-  Caption := 'SRDemo: LeiaSR + FireMonkey TViewport3D';
+  Caption := 'SRDemoFMX: LeiaSR + FireMonkey TViewport3D';
   Application.OnException := AppException;
   WindowState := TWindowState.wsMaximized;
   BuildControls;
@@ -684,7 +684,7 @@ var
   I: Integer;
   F: TSearchRec;
 begin
-  // The exe is in SRDemo\Win64\Debug; look upwards for the repository's media
+  // The exe is in SRDemoFMX\Win64\Debug; look upwards for the repository's media
   Dir := ExtractFilePath(ParamStr(0));
   for I := 1 to 5 do
   begin
@@ -910,7 +910,7 @@ const
   Mode: array[Boolean] of string = ('2D fallback', 'Weaving');
 begin
   // In full debug mode, look for heap corruption close to when it happens.
-  // A corrupt block is logged to SRDemo_FastMM.log with stack traces, and
+  // A corrupt block is logged to SRDemoFMX_FastMM.log with stack traces, and
   // an exception is raised, which the renderer reports and stops on.
   Inc(FFrames);
   if FastMM_DebugModeActive and (FFrames mod FastMMScanEvery = 0) then

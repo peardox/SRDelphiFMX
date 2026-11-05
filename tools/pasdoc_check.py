@@ -7,7 +7,7 @@ Usage, from the repository root:
 which checks lib and every project folder (any folder holding a .dpr)
 together, or name the folders to check:
 
-    python3 tools/pasdoc_check.py lib SRDemo
+    python3 tools/pasdoc_check.py lib SRDemoFMX
 
 It reads every .pas file in each folder and the folders inside it (lib and
 ui), and each program's .dpr. Names declared in any of them count for

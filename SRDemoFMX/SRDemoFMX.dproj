@@ -4,12 +4,12 @@
         <ProjectVersion>20.5</ProjectVersion>
         <FrameworkType>FMX</FrameworkType>
         <AppType>Application</AppType>
-        <MainSource>SRDemo.dpr</MainSource>
+        <MainSource>SRDemoFMX.dpr</MainSource>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Debug</Config>
         <Platform Condition="'$(Platform)'==''">Win64</Platform>
         <TargetedPlatforms>130</TargetedPlatforms>
-        <ProjectName Condition="'$(ProjectName)'==''">SRDemo</ProjectName>
+        <ProjectName Condition="'$(ProjectName)'==''">SRDemoFMX</ProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
@@ -60,7 +60,7 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
-        <SanitizedProjectName>SRDemo</SanitizedProjectName>
+        <SanitizedProjectName>SRDemoFMX</SanitizedProjectName>
         <DCC_DcuOutput>.\$(Platform)\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.\$(Platform)\$(Config)</DCC_ExeOutput>
         <DCC_E>false</DCC_E>
@@ -193,7 +193,7 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <Manifest_File>$(BDS)\bin\default_app.manifest</Manifest_File>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\SRFmxBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)
+        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\SRBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)
 (copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)" || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)
 $(PostBuildEvent)]]></PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
@@ -225,7 +225,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
             <FormType>fmx</FormType>
         </DCCReference>
         <DCCReference Include="..\lib\FMX.SRStereoViewport.pas"/>
-        <DCCReference Include="..\lib\SRFmxBridge.Api.pas"/>
+        <DCCReference Include="..\lib\SRBridge.Api.pas"/>
         <DCCReference Include="..\lib\SimulatedReality.Api.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
@@ -245,7 +245,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <BorlandProject>
             <Delphi.Personality>
                 <Source>
-                    <Source Name="MainSource">SRDemo.dpr</Source>
+                    <Source Name="MainSource">SRDemoFMX.dpr</Source>
                 </Source>
                 <WelcomePageFile Path="..\README.md"/>
                 <WelcomePageFolder/>
@@ -272,7 +272,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
@@ -280,7 +280,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRFmxBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRFmxBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

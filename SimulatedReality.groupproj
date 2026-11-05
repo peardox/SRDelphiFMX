@@ -3,7 +3,13 @@
         <ProjectGuid>{EB584342-10B8-4105-BBDD-416CF83173F6}</ProjectGuid>
     </PropertyGroup>
     <ItemGroup>
-        <Projects Include="SRDemo\SRDemo.dproj">
+        <Projects Include="SRDemoFMX\SRDemoFMX.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="SRFullScreenTest\SRFullScreenTest.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="SRDemoVCL\SRDemoVCL.dproj">
             <Dependencies/>
         </Projects>
     </ItemGroup>
@@ -14,23 +20,41 @@
             <Default.Personality/>
         </BorlandProject>
     </ProjectExtensions>
-    <Target Name="SRDemo">
-        <MSBuild Projects="SRDemo\SRDemo.dproj"/>
+    <Target Name="SRDemoFMX">
+        <MSBuild Projects="SRDemoFMX\SRDemoFMX.dproj"/>
     </Target>
-    <Target Name="SRDemo:Clean">
-        <MSBuild Projects="SRDemo\SRDemo.dproj" Targets="Clean"/>
+    <Target Name="SRDemoFMX:Clean">
+        <MSBuild Projects="SRDemoFMX\SRDemoFMX.dproj" Targets="Clean"/>
     </Target>
-    <Target Name="SRDemo:Make">
-        <MSBuild Projects="SRDemo\SRDemo.dproj" Targets="Make"/>
+    <Target Name="SRDemoFMX:Make">
+        <MSBuild Projects="SRDemoFMX\SRDemoFMX.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="SRFullScreenTest">
+        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj"/>
+    </Target>
+    <Target Name="SRFullScreenTest:Clean">
+        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="SRFullScreenTest:Make">
+        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="SRDemoVCL">
+        <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj"/>
+    </Target>
+    <Target Name="SRDemoVCL:Clean">
+        <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="SRDemoVCL:Make">
+        <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="SRDemo"/>
+        <CallTarget Targets="SRDemoFMX;SRFullScreenTest;SRDemoVCL"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="SRDemo:Clean"/>
+        <CallTarget Targets="SRDemoFMX:Clean;SRFullScreenTest:Clean;SRDemoVCL:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="SRDemo:Make"/>
+        <CallTarget Targets="SRDemoFMX:Make;SRFullScreenTest:Make;SRDemoVCL:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
