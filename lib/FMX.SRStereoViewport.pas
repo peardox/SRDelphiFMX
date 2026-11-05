@@ -519,9 +519,6 @@ type
       @link(TSRStereoRenderer.OnError) and the log.
       @param(Msg the error) }
     procedure DoError(const Msg: string);
-    { Sends one line to @link(TSRStereoRenderer.OnLog).
-      @param(Msg the line) }
-    procedure Log(const Msg: string);
     { Copies the test image into the side-by-side buffer, letterboxed or
       pillarboxed in black so each eye's view has the viewport's shape and the
       picture keeps its own.
@@ -590,6 +587,28 @@ type
       @param(AComponent the component going away)
       @param(Operation what is happening to it) }
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
+    { Sends one line to @link(TSRStereoRenderer.OnLog).
+      @param(Msg the line) }
+    procedure Log(const Msg: string);
+    { Lets a subclass supply each frame's two views itself, ready made, in
+      place of the 3D scene and of @link(TSRStereoRenderer.ShowStereoImage)'s
+      image; they are uploaded and woven as given. This one supplies none,
+      so the renderer works as it always has.
+      @param(ViewportW the viewport's width in pixels)
+      @param(ViewportH the viewport's height in pixels)
+      @param(Flat @true while the lens is off: both views should then show
+        the same picture (the left view), as the viewport is seen in 2D)
+      @param(Views receives the first pixel of the top row: the left view,
+        then the right view, side by side in each row)
+      @param(W receives the width of one view in pixels)
+      @param(H receives the height in pixels)
+      @param(Pitch receives the bytes from one row to the next)
+      @param(Fmt receives the pixel format, @code(SRB_FMT_BGRA8) or
+        @code(SRB_FMT_RGBA8))
+      @returns(@true if views were supplied; they must stay valid until the
+        next call) }
+    function SupplyViews(ViewportW, ViewportH: Integer; Flat: Boolean; out Views: Pointer;
+      out W, H, Pitch, Fmt: Integer): Boolean; virtual;
   public
     { Creates the renderer, inactive.
       @param(AOwner the owner) }
@@ -1058,6 +1077,18 @@ begin
   Log(Format('Stereo image fitted: %d x %d per eye in a %d x %d view (viewport %d x %d), format %d%s',
     [SrcW, SrcH, W, H, ViewportW, ViewportH, FStereoImageFormat,
      StrIf(FLensOn, '', ', flat (lens off)')]));
+end;
+
+function TSRStereoRenderer.SupplyViews(ViewportW, ViewportH: Integer; Flat: Boolean;
+  out Views: Pointer; out W, H, Pitch, Fmt: Integer): Boolean;
+begin
+  // None: the 3D scene, or ShowStereoImage's image, as always
+  Views := nil;
+  W := 0;
+  H := 0;
+  Pitch := 0;
+  Fmt := SRB_FMT_BGRA8;
+  Result := False;
 end;
 
 procedure TSRStereoRenderer.SetLensMode(const Value: TSRLensMode);
@@ -2063,6 +2094,8 @@ var
   Cx, Cy, Wmm, Hmm, NowMs, Sep: Double;
   W, H, Pitch, Fmt, RC: Integer;
   Form: TCommonCustomForm;
+  Supplied: Pointer;
+  SW, SH, SPitch, SFmt: Integer;
 begin
   if FInRender or (FViewport = nil) then
     Exit;
@@ -2183,7 +2216,20 @@ begin
       FRefCameraPos := Point3D(Cam.AbsolutePosition.X, Cam.AbsolutePosition.Y,
         Cam.AbsolutePosition.Z);
 
-      if FStereoImage <> nil then
+      // Separate variables, so a subclass that supplies nothing cannot
+      // disturb W and H, which the 3D scene below still needs
+      if not SupplyViews(Round(Ctx.Width), Round(Ctx.Height), not FLensOn, Supplied,
+        SW, SH, SPitch, SFmt) then
+        Supplied := nil;
+      if Supplied <> nil then
+      begin
+        // A subclass's views (SupplyViews): woven as given, no 3D rendering
+        W := SW;
+        H := SH;
+        Pitch := SPitch;
+        Fmt := SFmt;
+      end
+      else if FStereoImage <> nil then
       begin
         // Test image: weave it exactly as given, no 3D rendering
         CopyStereoImage(Round(Ctx.Width), Round(Ctx.Height), W, H, Pitch);
@@ -2207,7 +2253,9 @@ begin
         // The scene overwrote the buffer: a test image must be copied again
         FStereoImageDirty := True;
       end;
-      if FZeroCopyActive and (FStereoImage = nil) then
+      if Supplied <> nil then
+        RC := srb_SubmitViews(Supplied, W, H, Pitch, Fmt)
+      else if FZeroCopyActive and (FStereoImage = nil) then
         RC := srb_PresentViews(W, H)   // the eyes are already in the bridge's texture
       else
         RC := srb_SubmitViews(@FBuffer[0], W, H, Pitch, Fmt);

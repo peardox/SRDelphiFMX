@@ -57,6 +57,8 @@ type
     FLensMode: Integer;
     { See @link(TSRSettings.UseGlassesFree3D). }
     FUseGlassesFree3D: Boolean;
+    { See @link(TSRSettings.PlayerFolder). }
+    FPlayerFolder: string;
   public
     { Creates settings with default values, which are kept for any setting
       missing from the file when it is loaded. }
@@ -127,6 +129,11 @@ type
       off until the user turns it on. Ignored where LeiaSR is not
       installed: there the program behaves as if it had no SR support. }
     property UseGlassesFree3D: Boolean read FUseGlassesFree3D write FUseGlassesFree3D;
+
+    { The folder MoviePlayerFMX last opened a film or frame from, where its
+      Open... starts next time; empty until it has opened one. The demos do
+      not use it. }
+    property PlayerFolder: string read FPlayerFolder write FPlayerFolder;
   end;
 
 implementation

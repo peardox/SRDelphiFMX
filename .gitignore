@@ -86,3 +86,16 @@ modules/
 
 # CMake build folder of the bridge
 bridge/build/
+
+# FFmpeg GPL build for MoviePlayerFMX: each developer supplies it (see README)
+dll/ffmpeg/
+
+# Films for MoviePlayerFMX: too big for git, and often not ours to publish
+media/**/*.mkv
+media/**/*.mp4
+media/**/*.m4v
+media/**/*.mov
+media/**/*.avi
+media/**/*.ts
+media/**/*.m2ts
+media/**/*.webm

@@ -9,6 +9,9 @@
         <Projects Include="SRDemoVCL\SRDemoVCL.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="MoviePlayerFMX\MoviePlayerFMX.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -35,14 +38,23 @@
     <Target Name="SRDemoVCL:Make">
         <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj" Targets="Make"/>
     </Target>
+    <Target Name="MoviePlayerFMX">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Clean">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Make">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="SRDemoFMX;SRDemoVCL"/>
+        <CallTarget Targets="SRDemoFMX;SRDemoVCL;MoviePlayerFMX"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="SRDemoFMX:Clean;SRDemoVCL:Clean"/>
+        <CallTarget Targets="SRDemoFMX:Clean;SRDemoVCL:Clean;MoviePlayerFMX:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="SRDemoFMX:Make;SRDemoVCL:Make"/>
+        <CallTarget Targets="SRDemoFMX:Make;SRDemoVCL:Make;MoviePlayerFMX:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>
