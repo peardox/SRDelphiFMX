@@ -52,6 +52,8 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
 | `media/hsbs/` | Half side-by-side frames for MoviePlayerFMX (kept out of `media/` itself, whose images SRDemoFMX lists) |
 | `dll/` | The compiled `SRBridge.dll`. CMake copies it here, and each project's post-build step copies it next to the exe |
 | `tools/pasdoc_check.py` | Checks the Pascal units follow the PasDoc and layout rules |
+| `tools/pasdoc.bat` | Builds the PasDoc reference: `docs/html/` and `docs/chm/`, each with `api/` and a folder per program (git ignores both) |
+| `tools/pasdoc-dark.css`, `pasdoc-chm-dark.css` | Dark colours that `pasdoc.bat` adds to the HTML (when the system is dark) and the `.chm` files (always) |
 | `tools/enable_crashdumps.reg`, `disable_crashdumps.reg` | Turn Windows crash dumps for SRDemoFMX.exe on and off |
 
 New programs go in their own folder beside `SRDemoFMX/`, with their forms in a `ui/` folder inside it. Add `..\lib` to the unit search path, copy the post-build event from `SRDemoFMX.dproj`, and add the project to the group.
@@ -86,6 +88,19 @@ This builds `SRBridge.dll` and copies it to `dll\`. It must be built with MSVC, 
 Open `SimulatedReality.groupproj` and build SRDemoFMX. The project targets Windows 64-bit only, because the SR runtime is 64-bit only. The project's manifest is Per-Monitor v2 DPI aware; without that, Windows scales the window and the woven pattern no longer lines up with the panel's pixels. After each build, `dll\SRBridge.dll` is copied next to the exe. If it isn't there, the build output shows a warning.
 
 The SR Platform runtime must be installed, with its service running, and the display connected in extended mode at its native resolution.
+
+### 3. The reference (PasDoc, optional)
+
+`tools\pasdoc.bat` (run from anywhere) writes the PasDoc reference as HTML in `docs\html\` and as HTML Help in `docs\chm\`, each with one folder for the API and one per program:
+
+| Folder | What |
+|---|---|
+| `api\` | Every unit in `lib/` except `FMX.SRStereoViewport.Reg` (design-time registration). Start at `docs\html\api\index.html`. |
+| `SRDemoFMX\`, `SRDemoVCL\`, `MoviePlayerFMX\` | One program: its `.dpr`, its forms and the `lib/` units it uses, all read from the `.dpr`'s uses clause, so the `@link`s in its comments resolve. |
+
+The programs are found, not listed: any folder in the root holding `<folder>\<folder>.dpr` gets its own reference. It needs `pasdoc` on the PATH (or `PASDOC` set to its full path; releases at https://github.com/pasdoc/pasdoc/releases/), and, for the `.chm` files, Microsoft HTML Help Workshop's `hhc.exe` (or `HHC` set to its full path); without `hhc.exe` the HTML Help projects are written but not compiled. `docs\html` and `docs\chm` are deleted first, so nothing from an earlier run is left. The view is Windows 64-bit (`MSWINDOWS`, `WIN64`, `CPUX64` defined), Release (FastMM5's full debug mode undefined).
+
+Dark colours are added after each run, appended to the `pasdoc.css` PasDoc wrote (so PasDoc's own stylesheet is used as it is, and no copy of it, GPL, is kept here). `tools/pasdoc-dark.css` is for the HTML: dark only when the browser or system asks for it, light otherwise. `tools/pasdoc-chm-dark.css` is for the `.chm` files: always dark, because the HTML Help viewer (the old Internet Explorer engine) can neither ask nor read CSS custom properties. Both cover PasDoc 1.0 (Bootstrap) and 0.16 and earlier. `set PASDOC_DARK=0` leaves them out.
 
 ## Using it in a program
 

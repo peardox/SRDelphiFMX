@@ -99,3 +99,8 @@ media/**/*.avi
 media/**/*.ts
 media/**/*.m2ts
 media/**/*.webm
+
+# PasDoc output (tools/pasdoc.bat) and a log of it redirected to the root
+docs/html/
+docs/chm/
+/pasdoc.log

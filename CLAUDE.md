@@ -2,6 +2,25 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
+## Session handover (5 November 2026, 17:23)
+
+**Where this session ended.** GitHub's head is `e6ca440` ("Working SBS player", 13:12). That push has the sound step, and the README describes film sound as working. The "Step 3, sound" note below still says it was not built or tested; the owner hasn't confirmed either way in this session, so ask before relying on it. This session worked from `e6ca440` and changed no Pascal, `.dproj` or `bridge/` file, so nothing needs rebuilding.
+
+**What the session did** (17:01 to 17:23):
+- `tools/pasdoc.bat` (new, ASCII, CRLF), adapted from TSteamAPI's. It writes the PasDoc reference as HTML to `docs\html\` and as HTML Help to `docs\chm\`, each with `api\` (every `lib` unit except `FMX.SRStereoViewport.Reg`) and one folder per program.
+- Programs are found, not listed: any root folder holding `<folder>\<folder>.dpr`. Each program's sources are its `.dpr` plus the units its uses clause names `in '...'`: `ui\` forms and `..\lib` units, with FastMM5 left out. That way the `@link`s in the `.dpr` comments resolve.
+- Win64 Release view only (`MSWINDOWS`, `WIN64`, `CPUX64`); no FPC runs, unlike TSteamAPI. `docs\html` and `docs\chm` are deleted whole before each run. The `.chm` names are `SimulatedReality.chm` and `<program>.chm`.
+- Dark colours (17:11 to 17:14): `tools/pasdoc-dark.css` (HTML, inside `prefers-color-scheme: dark`, Bootstrap 5.3's own dark palette plus `--pasdoc-*`) and `tools/pasdoc-chm-dark.css` (always dark, plain colours with `!important`, as the HTML Help viewer is IE 7 mode: no `var()`, `:root` or `rgba()`). `pasdoc.bat`'s `:dark` appends one to each run's `pasdoc.css` (`PASDOC_DARK=0` skips it), so PasDoc's GPL `pasdoc.css` is never copied into this repository, which may go MIT. PasDoc 1.0.x pages are Bootstrap 5.3.8 with no `data-bs-theme`, hence no dark mode of their own. The HTML overlay was checked in headless Chrome on PasDoc's own test output (dark, light unchanged, narrow screen, notes and warnings); the `.chm` one was not, as there is no HTML Help viewer here.
+- `README.md`: a layout row and "3. The reference (PasDoc, optional)" under Building. `.gitignore`: `docs/html/`, `docs/chm/`, `/pasdoc.log`.
+- TSteamAPI (17:16 to 17:18, another repository): the same dark colours added to its `tools/pasdoc.bat` (all four runs) and `tools/pasdoc.sh` (`docs/html/fpc`), as zip Doc5 following its push `a0c0e2c`. Its README and `CLAUDE.md` record it ("Zip Doc5"), and its own checks reported 0 problems. `pasdoc.sh` was tested there with a stand-in pasdoc; its `.bat` and `.chm` look are untested, like this repository's.
+
+**Waiting on the owner:**
+- A first run of `tools\pasdoc.bat`. It was written without a Windows shell or pasdoc. The source lists it builds were checked by simulating its parsing (MoviePlayerFMX 14 files, SRDemoFMX 10, SRDemoVCL 8, all present). The first thing to watch is whether pasdoc parses the `.dpr` files cleanly, since TSteamAPI only ever gave it units. If it doesn't, drop the `.dpr` from `SRCS` in `:program`.
+- How the `.chm` files look with `pasdoc-chm-dark.css`, here and in TSteamAPI.
+- Whether the sound step (below) is verified, so this file can say so.
+
+**Delivered:** the zip of `tools/pasdoc.bat`, `README.md` and `.gitignore` (17:06); then this file alone (17:08); then the dark colours with `tools/pasdoc.bat`, `tools/pasdoc-dark.css`, `tools/pasdoc-chm-dark.css`, `README.md` and this file (17:14); then this file alone (17:23). The next zip holds only files changed after this one.
+
 ## MoviePlayerFMX (5 November 2026, from 09:50)
 
 The new direction: playing 3D films. The owner's rules for it: assume half side-by-side (HSBS), left eye on the left, for all video for now (swapping eyes and top-and-bottom later); a new project, MoviePlayerFMX, in the group; the new code is an extension, never a replacement; the base library must stay functionally intact, with both demos working as before; and the new library must use no framework, so FMX and VCL can both use it.
@@ -19,9 +38,7 @@ Step 2, film pictures (verified 11:14 on the owner's hardware with the full Big 
 
 Step 3, sound (delivered 12:40, not yet built or tested): `lib/SRAudioOutput.pas` (no FMX or VCL) declares the few WASAPI interfaces itself (IMMDeviceEnumerator, IMMDevice, IAudioClient, IAudioRenderClient; Delphi's RTL has none), opens the default output device in shared mode at its mix rate and channels as 32-bit float (EVENTCALLBACK, AUTOCONVERTPCM), all calls on its own MTA thread, fed from a 1 s ring buffer; its clock is the start time plus real frames handed over less the device's padding, smoothed by a stopwatch between reports and never past what was handed over. `TSRVideoDecoder` now runs three threads (reader into two packet queues, resting while both hold 60 packets or 64 MB; pictures; sound through swresample to the device format, starting the device once 0.25 s is buffered); times are film times from the format's `start_time`; the sound is the clock until drained, then a wall clock carries on; without sound (no track, no decoder, no device) a wall clock from the first picture, and the log says why. The first picture shows at once. The adapter logs the sound line, the conversion and sound shortfalls (underruns). Untested risks: the hand-written WASAPI interface declarations (method order), and the clock's behaviour on underruns.
 
-## Session handover (5 November 2026, 09:00)
-
-**Where the last session ended.** The owner pushed everything ("Demos good", `de09bb8`, 09:03) and this repository was synced to it and checked: sources as delivered, PasDoc clean, `.dproj`/`.groupproj` byte order marks kept, `dll/SRBridge.dll` rebuilt with `srb_SceneParamsSize`. The owner's own changes in that push: both projects default to Release, the IDE's deployment section in `SRDemoFMX.dproj`, per-configuration post-build events in `SRDemoVCL.dproj`, and `mk.bat` added to `bridge/.gitignore` (it is still tracked; `git rm --cached bridge/mk.bat` would stop that, if the owner wants). The next zip holds only files changed since `de09bb8` plus this note.
+## Earlier session handover (5 November 2026, 09:00)
 
 **What the session did** (06:28 to 09:00; details in the git log):
 - Tidy-up of the full-screen hunt's diagnostics; SRFullScreenTest removed.
