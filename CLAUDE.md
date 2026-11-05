@@ -2,11 +2,29 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
-## Where to pick up (5 November 2026, 09:00)
+## Session handover (5 November 2026, 09:00)
 
-**Tidy-up after the demo scene work (owner, 08:54: "yep, that did it. Tidy up?").** Both demos now show the same scene with the same controls and both run at the display's 60 fps cap. The step-by-step history of 06:44 to 08:54 is in the git log; what it left is below. Next: the owner's test, then the push; after that, from "Offered, not done".
+**Where the last session ended.** The owner had the whole morning's work as zips of changed files, the last one `Handover.zip` (the commit "Session handover", after `a379aa6`); this repository was 41 commits ahead of `origin/main`, left for the owner to push after testing. Before building on anything, check what GitHub has: if the owner pushed, `origin/main` matches the owner's copy; if not, the zips are what the owner has, and the next zip holds only files changed since that commit. The last bridge change was `e68e735` (`srb_SceneParamsSize`); the owner had rebuilt it and both demos ran at 60 fps (Release, capped to the display's refresh).
 
-The demo scene (SRDemoFMX in FMX objects, SRDemoVCL drawn by the bridge's `srb_RenderScene`, in the same world units):
+**What the session did** (06:28 to 09:00; details in the git log):
+- Tidy-up of the full-screen hunt's diagnostics; SRFullScreenTest removed.
+- The demo scene for finding the depth limits (below), the same in both demos, with the same controls.
+- Full screen hides the taskbar (topmost a second later; see below).
+- The Depth slider replaced by a Settings... dialog for the eye separation; depth always 1.
+- SRDemoVCL's compile fixes, and a bridge size check against an old SRBridge.dll.
+- SRDemoFMX from 33 to 60 fps by skipping FMX's own, unseen paint of the viewport.
+
+**Waiting on the owner:**
+- A test of `TidyUp.zip` (it removed the `/notopmost` and `/fmxpaint` switches only; `Handover.zip` is this file alone), then the push.
+- Not yet confirmed: full screen and back with FMX's paint skipped (eye views should stay right), and that the delayed topmost step never raises `ECannotCreateSwapChain`.
+- The question the scene was built for: which sphere (mm in front of the glass, from the status bar) is the last that fuses comfortably, windowed and full screen.
+- Whether tilt and roll go the same way in SRDemoVCL as in SRDemoFMX (flip the sign in the bridge's `sceneM` if not).
+
+**Next, if the owner wants more:** "Offered, not done" below. The owner tests every delivery before the push, so keep deliveries small.
+
+## The demo scene, speed and full screen
+
+The scene (SRDemoFMX in FMX objects, SRDemoVCL drawn by the bridge's `srb_RenderScene`, in the same world units):
 - An 11 x 11 grid of spheres (r 0.7, 3 units apart in X and Z, Y = 0), one colour per depth (white on the glass, blue behind, yellow to red in front), the green main sphere at the origin; two columns of three cubes (3 units, Y = +-(4.5 + 4.5k)), turning a turn in 8 s; a back wall 60 x 40 at Z = 18. The viewport is 16.5685 units high on the glass (camera 20 back, 45 degrees).
 - FMX: objects under `FSceneRoot` (wheel, tilt, roll), the grid under `FGridRoot` inside it (R spin, `FGridSpin`, 20 s a turn the other way to the cubes, paused at start). The FPS is a `TPlane` with a texture redrawn once a second (a `TText3D` came out garbled), at depth 0 top left, half see-through.
 - Bridge: `SRB_SceneParams` is 64 bytes (`fps`, `sceneZ`, `tiltDeg`, `rollDeg`, `gridSpinDeg`); world to mm `Scaling(U, -U, -U) * Translation(cx, cy, 0)`; the FPS as seven-segment digits. `srb_SceneParamsSize` lets SRDemoVCL refuse an older bridge (which draws the old scene).
@@ -17,7 +35,7 @@ Speed: `TSRViewport3D` (in `FMX.SRStereoViewport`) skips FMX's own, unseen paint
 
 Full screen hides the taskbar: the window is made topmost by `ApplyTopmost` from the frame loop 1 s after full screen came on (topmost at the moment of the resize raised `ECannotCreateSwapChain` for `TCanvasD2D`). `FullScreenTopmost` (default True) turns it off. Not yet confirmed that the delayed version never raises it.
 
-Removed in this tidy-up: SRDemoFMX's `/notopmost` and `/fmxpaint` test switches (the properties stay). `/warp` stays (tests the GPU-problem path).
+SRDemoFMX's only test switch left is `/warp` (FMX in software, to see the GPU-problem path); `FullScreenTopmost` and `SkipViewportPaint` stay as properties.
 
 ## State (verified on the owner's hardware)
 
