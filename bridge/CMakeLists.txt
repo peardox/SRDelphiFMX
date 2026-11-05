@@ -38,7 +38,7 @@ target_include_directories(SRBridge BEFORE PRIVATE
 )
 target_compile_definitions(SRBridge PRIVATE WIN32 _CRT_SECURE_NO_WARNINGS)
 target_compile_options(SRBridge PRIVATE /W3 /wd4251 /wd4275 /wd4996 /EHs)
-target_link_libraries(SRBridge PRIVATE d3d11 dxgi d3dcompiler)
+target_link_libraries(SRBridge PRIVATE d3d11 dxgi d3dcompiler dwmapi)
 # Use the dynamic release CRT (/MD) like the SR runtime itself, even in Debug builds
 set_property(TARGET SRBridge PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 

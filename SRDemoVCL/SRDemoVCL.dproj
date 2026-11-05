@@ -6,7 +6,7 @@
         <AppType>Application</AppType>
         <MainSource>SRDemoVCL.dpr</MainSource>
         <Base>True</Base>
-        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Config Condition="'$(Config)'==''">Release</Config>
         <Platform Condition="'$(Platform)'==''">Win64</Platform>
         <TargetedPlatforms>2</TargetedPlatforms>
         <ProjectName Condition="'$(ProjectName)'==''">SRDemoVCL</ProjectName>
@@ -50,7 +50,7 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <Manifest_File>$(BDS)\bin\default_app.manifest</Manifest_File>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\SRBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&&(copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)" || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)]]></PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
@@ -77,6 +77,8 @@
         <DCCReference Include="..\lib\SRSettings.pas"/>
         <DCCReference Include="..\lib\SRBridge.Api.pas"/>
         <DCCReference Include="..\lib\SRStereoImage.pas"/>
+        <DCCReference Include="..\lib\SRStartProblem.pas"/>
+        <DCCReference Include="..\lib\SRSettingsDialog.pas"/>
         <DCCReference Include="ui\MainFormVCL.pas">
             <Form>frmMainVCL</Form>
             <FormType>dfm</FormType>
@@ -111,4 +113,20 @@
     </ProjectExtensions>
     <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
     <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
+    <PropertyGroup Condition="'$(Config)'=='Debug' And '$(Platform)'=='Win64'">
+        <PreBuildEvent/>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PreLinkEvent/>
+        <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
+        <PreBuildEvent/>
+        <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
+        <PreLinkEvent/>
+        <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
+    </PropertyGroup>
 </Project>

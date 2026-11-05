@@ -22,10 +22,10 @@ unit FMX.SRStereoViewport;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, Winapi.Messages,
   System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   System.Math.Vectors, System.Diagnostics, FMX.Types, FMX.Types3D, FMX.Controls3D,
-  FMX.Viewport3D, FMX.Forms, FMX.Graphics, SRBridge.Api;
+  FMX.Viewport3D, FMX.Forms, FMX.Graphics, SRBridge.Api, SRStartProblem;
 
 type
   { How @link(TSRStereoRenderer) drives its frames. }
@@ -54,17 +54,6 @@ type
     { Lens always off: the viewport is drawn flat, in 2D. }
     lensAlwaysOff);
 
-  { A stage of each frame that can be skipped, to narrow down a fault. }
-  TSRDiagnosticSkip = (
-    { Ignore the eye tracker and use the nominal eyes. }
-    dsTracking,
-    { Do not render the scene (the views are left as they were). }
-    dsRender,
-    { Do not hand the views to the bridge (nothing is woven or presented). }
-    dsSubmit);
-  { The stages of each frame to skip. }
-  TSRDiagnosticSkips = set of TSRDiagnosticSkip;
-
   { Reports an SR system event.
     @param(Sender the renderer)
     @param(EventType the SR event type)
@@ -77,6 +66,31 @@ type
     @param(Sender the renderer)
     @param(Msg the text) }
   TSRTextNotify = procedure(Sender: TObject; const Msg: string) of object;
+
+  { Warns that the stereo picture will be slow or may fail because of the
+    GPUs in use.
+    @param(Sender the renderer)
+    @param(Msg what is wrong and what to do, for the user)
+    @param(CanFix @true when setting this program's Windows GPU preference
+      to high performance should fix it, from the next start; see
+      @link(TSRStereoRenderer.SetHighPerformanceGpu)) }
+  TSRGpuWarningNotify = procedure(Sender: TObject; const Msg: string; CanFix: Boolean) of object;
+
+  { Asks the program what to do after LeiaSR could not start, or was turned
+    off again because it would run very badly. Called after the start
+    attempt, from the message queue, never from inside a frame; SR is off
+    while it runs, so a dialog shown from it can be read.
+    @param(Sender the renderer)
+    @param(Problem what went wrong; the types are in @code(SRStartProblem))
+    @param(Msg the details, for the user)
+    @param(CanDegrade @true when SR would run if allowed to (a GPU problem),
+      so @code(scContinueDegraded) can be offered)
+    @param(CanFixGpu @true when setting this program's Windows GPU
+      preference to high performance should fix it, from the next start;
+      see @link(TSRStereoRenderer.SetHighPerformanceGpu))
+    @param(Choice what to do; @code(scContinueWithoutSR) on entry) }
+  TSRStartProblemNotify = procedure(Sender: TObject; Problem: TSRStartProblem; const Msg: string;
+    CanDegrade, CanFixGpu: Boolean; var Choice: TSRStartChoice) of object;
 
   { Reports the eye positions used for a frame.
     @param(Sender the renderer)
@@ -108,12 +122,33 @@ type
     ShearY: Single;
   end;
 
+  { A @code(TViewport3D) that can leave out its own drawing. While LeiaSR
+    shows it, the bridge's window covers the viewport and the renderer draws
+    the scene itself, once per eye, so FMX's own drawing of it (a third
+    render of the whole scene, at every repaint an animation asks for) is
+    never seen. @link(TSRStereoRenderer) sets @link(SkipPaint) while that is
+    so, when @link(TSRStereoRenderer.SkipViewportPaint) is @true. A plain
+    @code(TViewport3D) works too; it just draws the scene a third time. }
+  TSRViewport3D = class(TViewport3D)
+  private
+    { See @link(SkipPaint). }
+    FSkipPaint: Boolean;
+  protected
+    { Draws as @code(TViewport3D) does, unless @link(SkipPaint) is set. }
+    procedure Paint; override;
+  public
+    { @true: @code(Paint) does nothing. }
+    property SkipPaint: Boolean read FSkipPaint write FSkipPaint;
+  end;
+
   { Drives a @code(TViewport3D) on a LeiaSR display. Set
     @link(TSRStereoRenderer.Viewport), then @link(TSRStereoRenderer.Active). }
   TSRStereoRenderer = class(TComponent)
   private
     { The viewport shown in 3D. }
     FViewport: TViewport3D;
+    { See @link(SkipViewportPaint). }
+    FSkipViewportPaint: Boolean;
     { Whether the program wants 3D on. }
     FActive: Boolean;
     { Whether the bridge is initialised and frames are being drawn. }
@@ -124,6 +159,15 @@ type
     FLoopMode: TSRLoopMode;
     { Timer for @link(lmTimer). }
     FTimer: TTimer;
+    { @code([0]) is @true while this renderer exists. Queued retries hold a
+      reference to the array and check it before touching the renderer. }
+    FAlive: TArray<Boolean>;
+    { @link(FClock) milliseconds when the pending start began, for the log. }
+    FStartPendingSinceMs: Int64;
+    { @link(FClock) milliseconds of the last "start still pending" line. }
+    FLastPendingLogMs: Int64;
+    { Why the last @link(TryStart) could not start yet. }
+    FPendingReason: string;
     { The @code(Application.OnIdle) handler that was there before ours. }
     FPrevIdle: TIdleEvent;
     { Whether our idle handler is installed. }
@@ -208,13 +252,19 @@ type
     { Whether the viewport's centre is on the SR display (@true when the
       display's position is unknown). }
     FViewportOnSR: Boolean;
-    { See @link(TSRStereoRenderer.FlipModel). }
-    FFlipModel: Boolean;
-    { Whether the bridge has been told a present model, so a change back to
-      the default is passed on too. }
-    FPresentModelSet: Boolean;
-    { See @link(TSRStereoRenderer.FullScreenPlain). }
-    FFullScreenPlain: Boolean;
+    { See @link(TSRStereoRenderer.ZeroCopy). }
+    FZeroCopy: Boolean;
+    { See @link(TSRStereoRenderer.FullScreenTopmost). }
+    FFullScreenTopmost: Boolean;
+    { Whether the window has been made topmost in this full screen. }
+    FTopmostApplied: Boolean;
+    { When full screen last came on, ms on the renderer's clock. }
+    FFullScreenSinceMs: Int64;
+    { How many @link(TSRStereoRenderer.SuspendLens) calls hold the lens off. }
+    FLensSuspendCount: Integer;
+    { @true while each eye is copied on the GPU (the bridge shares FMX's
+      device); @false while eyes are read back with @code(CopyToBits). }
+    FZeroCopyActive: Boolean;
     { The rectangle the window is held to in full screen, physical pixels. }
     FFullScreenRect: TRect;
     { The window the full-screen hold is installed on, 0 if none. }
@@ -262,18 +312,66 @@ type
     FPrevFrameMs: Double;
     { Results of @code(srb_SubmitViews) since the last log line, by kind. }
     FResultCounts: array[0..3] of Integer;
-    { See @link(TSRStereoRenderer.TraceFrames). }
-    FTraceFrames: Integer;
-    { Frames still to trace since starting. }
-    FTraceLeft: Integer;
     { Frames drawn since starting. }
     FFrameNo: Int64;
-    { See @link(TSRStereoRenderer.DiagnosticSkip). }
-    FDiagnosticSkip: TSRDiagnosticSkips;
     { See @link(TSRStereoRenderer.OnSystemEvent). }
     FOnSystemEvent: TSRSystemEventNotify;
     { See @link(TSRStereoRenderer.OnError). }
     FOnError: TSRTextNotify;
+    { See @link(TSRStereoRenderer.OnGpuWarning). }
+    FOnGpuWarning: TSRGpuWarningNotify;
+    { See @link(TSRStereoRenderer.GpuWarning). }
+    FGpuWarning: string;
+    { The GPU problem found by @link(TSRStereoRenderer.CheckGpus), spNone if
+      none. }
+    FGpuProblem: TSRStartProblem;
+    { Whether the Windows GPU preference should fix @link(FGpuProblem). }
+    FCanFixGpu: Boolean;
+    { See @link(TSRStereoRenderer.OnStartProblem). }
+    FOnStartProblem: TSRStartProblemNotify;
+    { See @link(TSRStereoRenderer.StartProblem). }
+    FStartProblem: TSRStartProblem;
+    { See @link(TSRStereoRenderer.StopWhenDegraded). }
+    FStopWhenDegraded: Boolean;
+    { See @link(TSRStereoRenderer.AcceptDegraded). }
+    FAcceptDegraded: Boolean;
+    { A hidden window that receives @code(WM_SR_STARTPROBLEM), so the start
+      problem is handled as soon as the current message is done: FMX's
+      queue (@code(TThread.ForceQueue)) only ran it when the program went
+      idle, which with nothing touched could take a long time. }
+    FMsgWnd: HWND;
+    { The frame watchdog's state (a @code(TFrameWatch), shared with its
+      thread, which frees it): see @link(StartFrameWatch). }
+    FWatch: TObject;
+    { Frames driven by the watchdog since the last note in the log. }
+    FWatchFrames: Integer;
+    { When the watchdog was last noted in the log, ms on the renderer's
+      clock. }
+    FWatchLoggedMs: Int64;
+    { The start problem waiting for @link(FMsgWnd). }
+    FQueuedProblem: TSRStartProblem;
+    { Its details. }
+    FQueuedProblemMsg: string;
+    { Whether it can be run degraded. }
+    FQueuedCanDegrade: Boolean;
+    { Whether the Windows GPU preference should fix it. }
+    FQueuedCanFixGpu: Boolean;
+    { Whether a start problem is waiting for @link(FMsgWnd). }
+    FProblemQueued: Boolean;
+    { When it was found, ms on the renderer's clock. }
+    FProblemFoundMs: Int64;
+    { When @link(TSRStereoRenderer.Start) was last called, ms on the
+      renderer's clock, for timing the start in the log. }
+    FStartCalledMs: Int64;
+    { Whether the background check of LeiaSR (@code(srb_Probe)) is
+      running. }
+    FProbing: Boolean;
+    { Whether the last background check found SR ready, so the next
+      @link(TryStart) goes straight on to @code(srb_Initialize). Used up by
+      it. }
+    FProbeOK: Boolean;
+    { When the background check started, ms on the renderer's clock. }
+    FProbeStartMs: Int64;
     { See @link(TSRStereoRenderer.OnLog). }
     FOnLog: TSRTextNotify;
     { See @link(TSRStereoRenderer.OnEyesUpdated). }
@@ -283,6 +381,11 @@ type
     { Sets @link(TSRStereoRenderer.Viewport).
       @param(Value the viewport) }
     procedure SetViewport(const Value: TViewport3D);
+    { Sets the @link(TSRViewport3D)'s @code(SkipPaint) from
+      @link(SkipViewportPaint), whether frames are being drawn and whether
+      the bridge's window shows; FMX draws the viewport again when it is
+      cleared. }
+    procedure UpdatePaintSkip;
     { Sets @link(TSRStereoRenderer.Active), starting or stopping.
       @param(Value whether 3D should be on) }
     procedure SetActive(const Value: Boolean);
@@ -301,6 +404,14 @@ type
     { Timer handler for @link(lmTimer).
       @param(Sender the timer) }
     procedure TimerTick(Sender: TObject);
+    { Retries a pending start in 100 ms, through @code(TThread.ForceQueue):
+      a posted message, which Windows delivers ahead of paints and timers.
+      When FMX draws slowly (in software, say) it repaints all the time,
+      and neither @code(Application.OnIdle) nor a @code(TTimer) ever comes. }
+    procedure QueueStartRetry;
+    { One retry of a pending start; queues the next while still pending, and
+      says in the log why, every 2 seconds. }
+    procedure StartRetry;
     { Idle handler for @link(lmIdle); calls the previous handler first.
       @param(Sender the application)
       @param(Done set to @false to keep the idle loop running) }
@@ -312,21 +423,91 @@ type
     procedure HookLoop;
     { Removes the timer or idle handler. }
     procedure UnhookLoop;
+    { In full screen, once it has settled for a second (FMX has re-created
+      its drawing surface at the new size), makes the window topmost, so
+      the taskbar cannot show over it. Called each frame; does it once per
+      full screen. }
+    procedure ApplyTopmost;
+    { Starts the frame watchdog: a thread that, while frames are driven by
+      @code(Application.OnIdle), posts @code(WM_SR_FRAME) to @link(FMsgWnd)
+      whenever no frame has started for a while. OnIdle comes only when the
+      message queue is empty, and an FMX that keeps repainting (a heavy
+      scene, a Debug build, software rendering) never lets it empty;
+      posted messages are taken ahead of paints, so frames go on. }
+    procedure StartFrameWatch;
     { Initialises the bridge once the form's window exists.
       @returns(@true if running) }
     function TryStart: Boolean;
     { Moves the bridge's child window over the viewport.
       @returns(@true if the viewport is visible and placed) }
     function UpdateWindowBounds: Boolean;
-    { Renders one eye's view into the context and copies it out.
+    { Renders one eye's view into the context and copies it out: on the GPU
+      into the bridge's view texture when @link(FZeroCopyActive), otherwise
+      read back into @code(Dest).
       @param(Ctx the viewport's context)
       @param(RefCamera the viewport's current camera)
       @param(EyeMM the eye, millimetres from the display centre)
+      @param(EyeIndex 0 for the left eye, 1 for the right)
       @param(Dest where the first pixel goes)
       @param(Pitch bytes per row of the destination)
       @param(Cal receives what was measured and used) }
     procedure RenderEye(const Ctx: TContext3D; const RefCamera: TCamera;
-      const EyeMM: TPoint3D; Dest: Pointer; Pitch: Integer; out Cal: TSREyeCalibration);
+      const EyeMM: TPoint3D; EyeIndex: Integer; Dest: Pointer; Pitch: Integer;
+      out Cal: TSREyeCalibration);
+    { Hands the render target FMX is drawing into to the bridge, which
+      copies it into one eye's half of its view texture on the GPU. Called
+      between @code(BeginScene) and @code(EndScene), while FMX's target is
+      bound. On failure, logs why and turns zero copy off.
+      @param(EyeIndex 0 for the left eye, 1 for the right)
+      @param(W the view's width in pixels)
+      @param(H the view's height in pixels)
+      @returns(@true if the eye was copied) }
+    function CopyEyeOnGpu(EyeIndex, W, H: Integer): Boolean;
+    { Whether FMX draws with its Direct3D 11 context, whose device the
+      bridge can share.
+      @returns(@true for FMX's DX11 context) }
+    function FmxUsesDX11: Boolean;
+    { After SR starts: asks the bridge which GPUs are in use, logs them,
+      turns zero copy off if the bridge did not share FMX's device, and
+      records a problem (@link(FGpuProblem), @link(FGpuWarning)) if FMX is
+      not drawing on the SR display's GPU, or is drawing in software. }
+    procedure CheckGpus;
+    { Records a start problem and, if
+      @link(TSRStereoRenderer.OnStartProblem) is assigned, queues asking
+      it what to do (@link(HandleStartProblem)).
+      @param(Problem what went wrong)
+      @param(Msg the details)
+      @param(CanDegrade whether SR would run if allowed to)
+      @param(CanFixGpu whether the Windows GPU preference should fix it) }
+    procedure ReportStartProblem(Problem: TSRStartProblem; const Msg: string;
+      CanDegrade, CanFixGpu: Boolean);
+    { A start that cannot go on: leaves Active off, reports the error
+      (@link(TSRStereoRenderer.OnError)) and the start problem.
+      @param(Problem what went wrong)
+      @param(Msg the details, for the user) }
+    procedure FailStart(Problem: TSRStartProblem; const Msg: string);
+    { Asks @link(TSRStereoRenderer.OnStartProblem) what to do, and does it:
+      nothing (stay without glasses-free 3D), start again, start again
+      accepting the problem, or end the program (@code(Application.Terminate)).
+      @param(Problem what went wrong)
+      @param(Msg the details)
+      @param(CanDegrade whether SR would run if allowed to)
+      @param(CanFixGpu whether the Windows GPU preference should fix it) }
+    procedure HandleStartProblem(Problem: TSRStartProblem; const Msg: string;
+      CanDegrade, CanFixGpu: Boolean);
+    { Starts the background check of LeiaSR (@code(srb_Probe) on its own
+      thread, up to @link(TSRStereoRenderer.InitTimeout)); the answer is
+      posted to @link(FMsgWnd) and handled by @link(ProbeDone). The program
+      carries on without glasses-free 3D meanwhile. }
+    procedure StartProbe;
+    { The background check's answer: starts SR if it is ready, or reports
+      the start problem.
+      @param(RC what @code(srb_Probe) returned) }
+    procedure ProbeDone(RC: Integer);
+    { @link(FMsgWnd)'s window procedure: runs the queued start problem and
+      the background check's answer.
+      @param(Message the message) }
+    procedure MsgWndProc(var Message: Winapi.Messages.TMessage);
     { Clears the context, sets the viewport's lights and renders its 3D
       children.
       @param(Ctx the viewport's context) }
@@ -341,10 +522,6 @@ type
     { Sends one line to @link(TSRStereoRenderer.OnLog).
       @param(Msg the line) }
     procedure Log(const Msg: string);
-    { Logs a stage of the current frame while
-      @link(TSRStereoRenderer.TraceFrames) frames remain to be traced.
-      @param(Stage what is about to happen or just happened) }
-    procedure TraceStage(const Stage: string);
     { Copies the test image into the side-by-side buffer, letterboxed or
       pillarboxed in black so each eye's view has the viewport's shape and the
       picture keeps its own.
@@ -443,8 +620,30 @@ type
       @param(Info receives them)
       @returns(@true while running) }
     function DisplayInfo(out Info: TSRBDisplayInfo): Boolean;
+    { Copies the left eye's half of the stereo image being shown, for
+      showing it in 2D while SR is off.
+      @param(Dest receives it, resized to the half image)
+      @returns(@false, leaving Dest alone, when no stereo image is set) }
+    function CopyLeftView(Dest: TBitmap): Boolean;
+    { Whether this computer has the LeiaSR runtime. Quick, needs neither the
+      bridge nor SR to be running: check it at start-up to hide anything to
+      do with glasses-free 3D where there is none. Starting without it does
+      nothing and raises no event (@link(TSRStereoRenderer.StartProblem) is
+      then @code(spNotInstalled)).
+      @returns(@true if the runtime's DLLs are found) }
+    class function SRInstalled: Boolean; static;
     { Whether the bridge is running. }
     property Running: Boolean read FRunning;
+    { The problem from the last start attempt: @code(spNone) if SR started
+      normally (or has not been started). Set before
+      @link(TSRStereoRenderer.OnStartProblem) is called. }
+    property StartProblem: TSRStartProblem read FStartProblem;
+    { @true runs SR even with a GPU problem that
+      @link(TSRStereoRenderer.StopWhenDegraded) would stop it for. Set by
+      the renderer when @link(TSRStereoRenderer.OnStartProblem) chooses
+      @code(scContinueDegraded), so it is not asked again until the program
+      clears it. }
+    property AcceptDegraded: Boolean read FAcceptDegraded write FAcceptDegraded;
     { Whether the last frame was woven (@false: 2D fallback). }
     property Weaving: Boolean read FWeaving;
     { Left eye used for the last frame: millimetres from the display centre,
@@ -452,26 +651,50 @@ type
     property LeftEyeMM: TPoint3D read FLeftEyeMM;
     { Right eye used for the last frame. }
     property RightEyeMM: TPoint3D read FRightEyeMM;
+    { World units per millimetre on the display at the last frame: the
+      viewport's height on the glass, in world units at
+      @link(TSRStereoRenderer.FocusDistance), over its height in mm. A
+      point at world depth d in front of the glass plane (towards the
+      camera) is d / WorldUnitsPerMM mm in front of the real glass. 0 before
+      the first 3D frame. Changes when the viewport changes size. }
+    property WorldUnitsPerMM: Single read FCalLeft.Scale;
     { Whether the form covers the whole SR display, borderless (the
       display's monitor before SR is running). Done on the form's existing
       window, in physical pixels: FMX's own @code(FullScreen) re-creates the
       window and, at display scaling above 100%, sizes it in steps, and a
       weaver created part way through weaves for the wrong size. Set it
       before the form is shown and it is applied once SR starts. The
-      program hides its own controls if it wants only the viewport. }
+      window is made topmost a second in, so the taskbar cannot show over
+      it (@link(TSRStereoRenderer.FullScreenTopmost)). The program hides its own controls if it wants only the
+      viewport. }
     property FullScreen: Boolean read FFullScreen write SetFullScreen;
-    { A test of why full screen goes wrong after a few seconds: @true leaves
-      the bottom row of the display uncovered and does not tell Windows the
-      window is full screen (so the taskbar may show), so that nothing sees
-      a full-screen window. Takes effect the next time full screen is
-      entered. Default @false. }
-    property FullScreenPlain: Boolean read FFullScreenPlain write FFullScreenPlain;
-    { @false (the default): the bridge presents with the bitblt swap chain
-      model, as Leia's samples do. @true: the flip model, which Windows may
-      scan out directly when the window covers the display (full screen
-      broke a few seconds in with it). Takes effect when SR next starts;
-      needs a bridge built on or after 30 October 2026 to be set @true. }
-    property FlipModel: Boolean read FFlipModel write FFlipModel default False;
+    { @true (the default): the bridge shares FMX's Direct3D 11 device, and
+      each eye FMX renders is copied into the bridge's view texture on the
+      GPU, with no read-back to the CPU. Falls back by itself to reading
+      each eye back (@code(CopyToBits)) when FMX does not use DX11, the
+      bridge is older than 5 November 2026, or the copy fails; the log says
+      which. Takes effect when SR next starts. }
+    property ZeroCopy: Boolean read FZeroCopy write FZeroCopy default True;
+    { @true (the default): the window is made topmost a second into
+      @link(TSRStereoRenderer.FullScreen), while SR runs, so the taskbar
+      cannot show over it. Not at once: made topmost as the window changed
+      size, FMX failed to re-create its Direct2D swap chain. @false leaves
+      its place in the z-order alone. }
+    property FullScreenTopmost: Boolean read FFullScreenTopmost write FFullScreenTopmost default True;
+    { The GPU warning from the last start, empty when the GPUs are right
+      (or could not be checked). }
+    property GpuWarning: string read FGpuWarning;
+    { Sets this program's Windows GPU preference to high performance (the
+      same as Settings > System > Display > Graphics), so FMX draws on the
+      discrete GPU from the next start. Only the current user's setting
+      for this executable is changed.
+      @returns(@true if it was written) }
+    function SetHighPerformanceGpu: Boolean;
+    { Turns the lens off at once, and keeps it off until a matching call
+      with @false, so a message box or other 2D window on the SR display can
+      be read. Calls nest.
+      @param(Suspend @true to hold the lens off, @false to release) }
+    procedure SuspendLens(Suspend: Boolean);
     { Whether the lens is on now (asked to be: it takes the panel a moment
       to switch). While it is off the viewport is drawn flat. }
     property LensOn: Boolean read FLensOn;
@@ -486,6 +709,11 @@ type
   published
     { The viewport to show in 3D. }
     property Viewport: TViewport3D read FViewport write SetViewport;
+    { @true (the default): while frames are being drawn and the bridge's
+      window shows over the viewport, a @link(TSRViewport3D) leaves out its
+      own drawing (FMX's paint of the scene, never seen then). No effect on a
+      plain @code(TViewport3D). }
+    property SkipViewportPaint: Boolean read FSkipViewportPaint write FSkipViewportPaint default True;
     { Whether 3D is on. }
     property Active: Boolean read FActive write SetActive default False;
     { How frames are driven. }
@@ -537,18 +765,39 @@ type
     { Milliseconds between summary lines on
       @link(TSRStereoRenderer.OnLog); 0 turns them off. }
     property LogInterval: Integer read FLogInterval write FLogInterval default 1000;
-    { How many frames after starting to log stage by stage on
-      @link(TSRStereoRenderer.OnLog), so the last line before a crash shows
-      where it happened. }
-    property TraceFrames: Integer read FTraceFrames write FTraceFrames default 0;
-    { Stages of each frame to skip, to narrow down a fault. }
-    property DiagnosticSkip: TSRDiagnosticSkips read FDiagnosticSkip write FDiagnosticSkip default [];
     { Called once the bridge is running. }
     property OnStarted: TNotifyEvent read FOnStarted write FOnStarted;
     { Called with each SR system event. }
     property OnSystemEvent: TSRSystemEventNotify read FOnSystemEvent write FOnSystemEvent;
     { Called when starting or drawing fails. }
     property OnError: TSRTextNotify read FOnError write FOnError;
+    { Called once after SR starts if the stereo picture will be slow or may
+      fail because of the GPUs in use: FMX drawing on a different GPU from
+      the one that drives the SR display (on laptops, usually the integrated
+      one), or in software. Only called when SR keeps running with the
+      problem (@link(TSRStereoRenderer.StopWhenDegraded) @false, or
+      @link(TSRStereoRenderer.AcceptDegraded) @true); otherwise SR is
+      stopped and @link(TSRStereoRenderer.OnStartProblem) is called. The
+      same text is in @link(TSRStereoRenderer.GpuWarning) and the log. }
+    property OnGpuWarning: TSRGpuWarningNotify read FOnGpuWarning write FOnGpuWarning;
+    { @true (the default): when FMX would draw in software, on a GPU that
+      does not drive the SR display, or not with Direct3D 11, SR is stopped
+      again straight after starting and the program carries on without
+      glasses-free 3D (FMX
+      draws the viewport itself, one view), unless
+      @link(TSRStereoRenderer.AcceptDegraded) is set. @false keeps SR
+      running anyway, as before 5 November 2026. }
+    property StopWhenDegraded: Boolean read FStopWhenDegraded write FStopWhenDegraded default True;
+    { Called, from the message queue, when SR could not start (no bridge,
+      no SR display or service) or was stopped by
+      @link(TSRStereoRenderer.StopWhenDegraded). The handler chooses: stay
+      without glasses-free 3D (the default), try again, or use glasses-free
+      3D anyway, with the problem; or exit (the renderer calls
+      @code(Application.Terminate));
+      @code(AskStartProblem) in @code(SRStartProblem) is a ready-made
+      dialog for it. Without a handler the program carries on without
+      glasses-free 3D. }
+    property OnStartProblem: TSRStartProblemNotify read FOnStartProblem write FOnStartProblem;
     { Called with diagnostic lines: start-up details, a summary every
       @link(TSRStereoRenderer.LogInterval), events and errors. }
     property OnLog: TSRTextNotify read FOnLog write FOnLog;
@@ -559,7 +808,41 @@ type
 implementation
 
 uses
-  Winapi.MultiMon, Winapi.ShlObj, System.Win.ComObj, FMX.Platform.Win, SimulatedReality.Api;
+  Winapi.MultiMon, Winapi.ShlObj, Winapi.D3D11, System.Win.ComObj, FMX.Platform.Win,
+  FMX.Context.DX11, SimulatedReality.Api, SRGpuPreference;
+
+const
+  { Posted to the renderer's hidden window: a start problem is waiting. }
+  WM_SR_STARTPROBLEM = WM_APP + 1;
+  { Posted to the renderer's hidden window from the background check's
+    thread; WParam is what @code(srb_Probe) returned. }
+  WM_SR_PROBEDONE = WM_APP + 2;
+  { Posted to the renderer's hidden window by the frame watchdog: draw a
+    frame now. }
+  WM_SR_FRAME = WM_APP + 3;
+  { How often the frame watchdog looks, ms. }
+  FrameWatchPollMs = 10;
+  { How long without a frame before the watchdog posts one, ms (a frame
+    at 60 Hz takes about 17). }
+  FrameWatchStarveMs = 25;
+
+type
+  { State shared by the renderer and its frame watchdog's thread
+    (@link(TSRStereoRenderer.StartFrameWatch)). The renderer sets
+    @code(Stopped) when it goes; the thread then frees this. }
+  TFrameWatch = class
+  public
+    { The renderer's hidden window. }
+    Wnd: HWND;
+    { @code(GetTickCount64) when the last frame started. }
+    LastFrameTick: UInt64;
+    { 1 while a @code(WM_SR_FRAME) is waiting to be handled. }
+    Posted: Integer;
+    { 1 while frames are driven by @code(Application.OnIdle). }
+    Running: Integer;
+    { 1 once the renderer has gone. }
+    Stopped: Integer;
+  end;
 
 const
   { Default @link(TSRStereoRenderer.FocusDistance): FMX's usual camera sits
@@ -589,8 +872,6 @@ const
   SettleToleranceMM = 20.0;
   { Milliseconds without tracking before 3D waits to settle again. }
   LostResettleMs = 1000;
-  { Frames traced stage by stage after the viewport changes size. }
-  ResizeTraceFrames = 3;
 
 { Formats a point with no decimals for the log.
   @param(P the point)
@@ -634,6 +915,16 @@ begin
   FEyeSeparationScale := DefaultEyeScale;
   FInitTimeout := DefaultInitTimeout;
   FVSync := True;
+  FZeroCopy := True;
+  FFullScreenTopmost := True;
+  FStopWhenDegraded := True;
+  if not (csDesigning in ComponentState) then
+  begin
+    FMsgWnd := System.Classes.AllocateHWnd(MsgWndProc);
+    StartFrameWatch;
+  end;
+  SetLength(FAlive, 1);
+  FAlive[0] := True;
   FLoopMode := lmIdle;
   FLogInterval := 1000;
   FLookAround := True;
@@ -645,6 +936,7 @@ begin
   FSettleTime := 300;
   FViewportOnSR := True;
   FWindowVisible := -1;
+  FSkipViewportPaint := True;
   FLeftEyeMM := Point3D(NominalLeftX, 0, NominalZ);
   FRightEyeMM := Point3D(NominalRightX, 0, NominalZ);
   FClock := TStopwatch.StartNew;
@@ -653,7 +945,15 @@ end;
 destructor TSRStereoRenderer.Destroy;
 begin
   RemoveHold;
+  if Length(FAlive) > 0 then
+    FAlive[0] := False;   // queued retries must not touch us any more
   Stop;
+  if FWatch <> nil then
+    TFrameWatch(FWatch).Stopped := 1;   // its thread frees it
+  FWatch := nil;
+  if FMsgWnd <> 0 then
+    System.Classes.DeallocateHWnd(FMsgWnd);   // drops a queued start problem with it
+  FMsgWnd := 0;
   FTimer.Free;
   FStereoImage.Free;
   inherited;
@@ -772,6 +1072,11 @@ var
   P, C: TPoint;
   Over: HWND;
 begin
+  if FLensSuspendCount > 0 then
+  begin
+    Reason := 'held off for a message';
+    Exit(False);
+  end;
   // The lens is the SR display's: with the viewport on another monitor
   // there is nothing to look at through it
   if not FViewportOnSR then
@@ -1010,8 +1315,6 @@ begin
     // monitor the form opened on, so move it to the SR display now
     if FFullScreen and FRunning and SRDisplayRect(R) then
     begin
-      if FFullScreenPlain then
-        R.Bottom := R.Bottom - 1;
       InstallHold(Wnd);
       GetWindowRect(Wnd, WR);
       if (WR <> R) or (FFullScreenRect <> R) then
@@ -1050,11 +1353,6 @@ begin
       R := MI.rcMonitor;
       Source := 'its monitor (SR display not known yet)';
     end;
-    if FFullScreenPlain then
-    begin
-      R.Bottom := R.Bottom - 1;
-      Source := Source + ', PLAIN (bottom row left uncovered, Windows not told)';
-    end;
     // Lens on before the window changes, not after (see LensWanted)
     if FRunning then
       UpdateLens(True);
@@ -1069,22 +1367,29 @@ begin
     SetWindowLongPtr(Wnd, GWL_STYLE, Style and not (WS_OVERLAPPEDWINDOW or WS_MAXIMIZE));
     SetWindowPos(Wnd, HWND_TOP, R.Left, R.Top, R.Width, R.Height,
       SWP_NOOWNERZORDER or SWP_FRAMECHANGED);
-    if not FFullScreenPlain then
-    begin
-      TaskbarError := MarkFullscreen(Wnd, True);
-      Source := Source + ', ' + StrIf(TaskbarError = '', 'taskbar told', TaskbarError);
-    end;
+    // Topmost comes later, from the frame loop (ApplyTopmost): made topmost
+    // here, as the window changed size, FMX failed to re-create its
+    // Direct2D swap chain (ECannotCreateSwapChain, 07:55 and 08:00 logs)
+    FTopmostApplied := False;
+    FFullScreenSinceMs := FClock.ElapsedMilliseconds;
+    TaskbarError := MarkFullscreen(Wnd, True);
+    Source := Source + ', ' + StrIf(TaskbarError = '', 'taskbar told', TaskbarError);
     GetWindowRect(Wnd, WR);
     Log(Format('Full screen on %s: wanted (%d, %d) %d x %d, window now (%d, %d) %d x %d ' +
-      'physical pixels, maximised %s, not re-created',
+      'physical pixels, maximised %s, %s, not re-created',
       [Source, R.Left, R.Top, R.Width, R.Height, WR.Left, WR.Top, WR.Width, WR.Height,
-       BoolToStr(IsZoomed(Wnd), True)]));
+       BoolToStr(IsZoomed(Wnd), True), StrIf(FFullScreenTopmost,
+       'topmost in a second', 'not topmost (FullScreenTopmost False)')]));
   end
   else
   begin
     RemoveHold;
     FFullScreenRect := TRect.Empty;
     MarkFullscreen(Wnd, False);
+    if FTopmostApplied then
+      SetWindowPos(Wnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE or SWP_NOSIZE or SWP_NOOWNERZORDER or
+        SWP_NOACTIVATE);
+    FTopmostApplied := False;
     SetWindowLongPtr(Wnd, GWL_STYLE, Style or WS_OVERLAPPEDWINDOW);
     if FSavedPlacement.length = SizeOf(FSavedPlacement) then
       SetWindowPlacement(Wnd, @FSavedPlacement);
@@ -1152,6 +1457,8 @@ begin
     Exit;
   if FRunning then
     Stop;
+  if FViewport is TSRViewport3D then
+    TSRViewport3D(FViewport).SkipPaint := False;
   if FViewport <> nil then
     FViewport.RemoveFreeNotification(Self);
   FViewport := Value;
@@ -1222,11 +1529,18 @@ procedure TSRStereoRenderer.HookLoop;
 begin
   case FLoopMode of
     lmIdle:
-      if not FIdleHooked then
       begin
-        FPrevIdle := Application.OnIdle;
-        Application.OnIdle := AppIdle;
-        FIdleHooked := True;
+        if not FIdleHooked then
+        begin
+          FPrevIdle := Application.OnIdle;
+          Application.OnIdle := AppIdle;
+          FIdleHooked := True;
+        end;
+        if FWatch <> nil then
+        begin
+          TFrameWatch(FWatch).LastFrameTick := GetTickCount64;
+          TFrameWatch(FWatch).Running := 1;
+        end;
       end;
     lmTimer:
       begin
@@ -1245,6 +1559,8 @@ end;
 
 procedure TSRStereoRenderer.UnhookLoop;
 begin
+  if FWatch <> nil then
+    TFrameWatch(FWatch).Running := 0;
   if FIdleHooked then
   begin
     if TMethod(Application.OnIdle).Data = Pointer(Self) then
@@ -1272,10 +1588,85 @@ begin
   Tick;
 end;
 
+procedure TSRStereoRenderer.QueueStartRetry;
+var
+  Alive: TArray<Boolean>;
+begin
+  Alive := FAlive;
+  TThread.ForceQueue(nil,
+    procedure
+    begin
+      if (Length(Alive) > 0) and Alive[0] then
+        StartRetry;
+    end, 100);
+end;
+
+procedure TSRStereoRenderer.StartRetry;
+var
+  NowMs: Int64;
+begin
+  if not FStartPending then
+    Exit;   // started by the frame loop meanwhile, or no longer wanted
+  if not FInRender then
+    TryStart;
+  NowMs := FClock.ElapsedMilliseconds;
+  if FStartPending then
+  begin
+    if NowMs - FLastPendingLogMs >= 2000 then
+    begin
+      Log(Format('Start still pending after %d ms: %s', [NowMs - FStartPendingSinceMs, FPendingReason]));
+      FLastPendingLogMs := NowMs;
+    end;
+    QueueStartRetry;
+  end
+  else if FRunning then
+    Log(Format('Pending start completed after %d ms', [NowMs - FStartPendingSinceMs]));
+end;
+
 procedure TSRStereoRenderer.Tick;
 begin
+  if FWatch <> nil then
+    TFrameWatch(FWatch).LastFrameTick := GetTickCount64;
   if FStartPending or FRunning then
     RenderFrame;
+end;
+
+procedure TSRStereoRenderer.ApplyTopmost;
+const
+  SettleMs = 1000;
+begin
+  if FTopmostApplied or not FFullScreen or not FFullScreenTopmost or (FFormWnd = 0) or
+    (FClock.ElapsedMilliseconds - FFullScreenSinceMs < SettleMs) then
+    Exit;
+  FTopmostApplied := True;
+  SetWindowPos(FFormWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE or SWP_NOSIZE or SWP_NOOWNERZORDER or
+    SWP_NOACTIVATE);
+  Log(Format('Full screen: window made topmost %d ms after full screen came on (the taskbar stays ' +
+    'behind it)', [FClock.ElapsedMilliseconds - FFullScreenSinceMs]));
+end;
+
+procedure TSRStereoRenderer.StartFrameWatch;
+var
+  W: TFrameWatch;
+begin
+  W := TFrameWatch.Create;
+  W.Wnd := FMsgWnd;
+  W.LastFrameTick := GetTickCount64;
+  FWatch := W;
+  TThread.CreateAnonymousThread(
+    procedure
+    begin
+      while W.Stopped = 0 do
+      begin
+        Sleep(FrameWatchPollMs);
+        if (W.Running = 1) and (W.Posted = 0) and
+          (Int64(GetTickCount64) - Int64(W.LastFrameTick) > FrameWatchStarveMs) and
+          (AtomicCmpExchange(W.Posted, 1, 0) = 0) and
+          not PostMessage(W.Wnd, WM_SR_FRAME, 0, 0) then
+          W.Posted := 0;
+      end;
+      W.Free;   // the renderer has let go of it
+    end).Start;
 end;
 
 function TSRStereoRenderer.Start: Boolean;
@@ -1284,10 +1675,18 @@ begin
     Exit(False);
   if FRunning then
     Exit(True);
+  FStartCalledMs := FClock.ElapsedMilliseconds;
   FStartPending := True;
   Result := TryStart;
   if FStartPending then
+  begin
     HookLoop;
+    // Also retry through the message queue: OnIdle (and timers) never come
+    // while FMX is too busy drawing
+    FStartPendingSinceMs := FClock.ElapsedMilliseconds;
+    FLastPendingLogMs := FStartPendingSinceMs;
+    QueueStartRetry;
+  end;
 end;
 
 function TSRStereoRenderer.TryStart: Boolean;
@@ -1295,6 +1694,8 @@ var
   Form: TCommonCustomForm;
   Wnd: HWND;
   RC: Integer;
+  Dev: ID3D11Device;
+  InitMs: Int64;
 begin
   Result := False;
   if FViewport = nil then
@@ -1304,41 +1705,131 @@ begin
     Exit;
   end;
   if (FViewport.Root = nil) or not (FViewport.Root.GetObject is TCommonCustomForm) then
+  begin
+    FPendingReason := 'the viewport is not on a form yet';
     Exit;
+  end;
   Form := TCommonCustomForm(FViewport.Root.GetObject);
-  if (Form.Handle = nil) or not Form.Visible then
+  if Form.Handle = nil then
+  begin
+    FPendingReason := 'the form has no window yet';
     Exit;
+  end;
+  if not Form.Visible then
+  begin
+    FPendingReason := 'the form is not visible yet';
+    Exit;
+  end;
 
   FStartPending := False;
+  FStartProblem := spNone;
+  if not SRRuntimeInstalled then
+  begin
+    // No SR on this computer: not an error, so nothing for the user
+    FActive := False;
+    UnhookLoop;
+    FStartProblem := spNotInstalled;
+    Log('LeiaSR runtime not installed (SimulatedRealityCore/Displays/DirectX.dll not found): ' +
+      'glasses-free 3D is not available; nothing shown to the user');
+    Exit;
+  end;
   if not SRBridgeAvailable then
   begin
     FActive := False;
     UnhookLoop;
     DoError(SRBridgeLastError);
+    ReportStartProblem(spBridgeMissing, SRBridgeLastError, False, False);
     Exit;
   end;
+
+  // The wait for SR (a service starting, a display) happens on a background
+  // thread: srb_Initialize would wait on this one, with the window frozen.
+  // Until the answer comes the program carries on without glasses-free 3D.
+  if SRBridgeHasExport('srb_Probe') and (FMsgWnd <> 0) and not FProbeOK then
+  begin
+    if not FProbing then
+      StartProbe;
+    FPendingReason := 'waiting for the background check of LeiaSR';
+    UnhookLoop;
+    Exit;
+  end;
+  FProbeOK := False;   // used up: the next start checks again
 
   Wnd := FormToHWND(Form);
   FFormWnd := Wnd;
   srb_SetVSync(Ord(FVSync));
-  // Only call it when needed: bridges older than the export do not have it
-  if FFlipModel or FPresentModelSet then
+  FZeroCopyActive := False;
+  FGpuWarning := '';
+  if SRBridgeHasExport('srb_SetExternalDevice') then
   begin
-    srb_SetPresentModel(Ord(FFlipModel));
-    FPresentModelSet := True;
-  end;
-  Log(Format('Starting LeiaSR (timeout %.1f s), %s swap chain', [FInitTimeout,
-    StrIf(FFlipModel, 'flip-model', 'bitblt-model')]));
+    if FZeroCopy and FmxUsesDX11 then
+    begin
+      Dev := TCustomDX11Context.SharedDevice;
+      srb_SetExternalDevice(Pointer(Dev));
+      Dev := nil;
+      FZeroCopyActive := True;
+      Log('Zero copy: the bridge is offered FMX''s Direct3D 11 device; eyes are copied on the GPU');
+    end
+    else
+    begin
+      srb_SetExternalDevice(nil);
+      // Still let the bridge check which GPU FMX is on
+      if FmxUsesDX11 and SRBridgeHasExport('srb_SetProgramDevice') then
+      begin
+        Dev := TCustomDX11Context.SharedDevice;
+        srb_SetProgramDevice(Pointer(Dev));
+        Dev := nil;
+      end;
+      Log('Zero copy off (' + StrIf(FZeroCopy, 'FMX is not using its DX11 context', 'ZeroCopy is False') +
+        '): each eye is read back with CopyToBits');
+    end;
+  end
+  else if FZeroCopy then
+    Log('Zero copy not available: this SRBridge.dll is older than 5 November 2026; each eye is read back');
+  Log(Format('Starting LeiaSR (timeout %.1f s)', [FInitTimeout]));
+  InitMs := FClock.ElapsedMilliseconds;
   RC := srb_Initialize(Pointer(Wnd), FInitTimeout);
+  Log(Format('srb_Initialize returned %d after %d ms (%d ms after Start was called)',
+    [RC, FClock.ElapsedMilliseconds - InitMs, FClock.ElapsedMilliseconds - FStartCalledMs]));
   if RC <> SRB_OK then
   begin
     FActive := False;
     UnhookLoop;
     DoError(Format('LeiaSR initialisation failed (%d): %s', [RC, SRBridgeLastError]));
+    case RC of
+      SRB_E_NO_SERVICE: ReportStartProblem(spNoService, SRBridgeLastError, False, False);
+      SRB_E_NO_DISPLAY: ReportStartProblem(spNoDisplay, SRBridgeLastError, False, False);
+    else
+      ReportStartProblem(spStartFailed, SRBridgeLastError, False, False);
+    end;
     Exit;
   end;
   if FLatencyFrames > 0 then
     srb_SetLatencyInFrames(FLatencyFrames);
+  CheckGpus;
+  if FGpuProblem <> spNone then
+  begin
+    if FStopWhenDegraded and not FAcceptDegraded then
+    begin
+      // "Crap mode": better 2D at full speed than 3D that drags the whole
+      // program down. FMX draws the viewport itself while SR is off.
+      srb_Finalize;
+      FActive := False;
+      UnhookLoop;
+      FZeroCopyActive := False;
+      Log('LeiaSR stopped again (' + StartProblemName(FGpuProblem) + '): carrying on without glasses-free 3D (FMX draws the viewport itself). ' +
+        'StopWhenDegraded is True and AcceptDegraded False.');
+      if not (csDestroying in FViewport.ComponentState) then
+        FViewport.Repaint;
+      ReportStartProblem(FGpuProblem, FGpuWarning, True, FCanFixGpu);
+      Exit;
+    end;
+    Log('Running LeiaSR anyway (' + StartProblemName(FGpuProblem) + '): ' +
+      StrIf(FAcceptDegraded, 'AcceptDegraded is True', 'StopWhenDegraded is False'));
+    FStartProblem := FGpuProblem;
+    if Assigned(FOnGpuWarning) then
+      FOnGpuWarning(Self, FGpuWarning, FCanFixGpu);
+  end;
 
   FRunning := True;
   FActive := True;
@@ -1360,7 +1851,6 @@ begin
   FFramesSinceLog := 0;
   FWorstFrameMs := 0;
   FillChar(FResultCounts, SizeOf(FResultCounts), 0);
-  FTraceLeft := FTraceFrames;
   FFrameNo := 0;
   HookLoop;
   LogStartDetails;
@@ -1383,6 +1873,7 @@ begin
     FWeaving := False;
     srb_Finalize;
     Log('Stopped LeiaSR');
+    UpdatePaintSkip;
     if (FViewport <> nil) and not (csDestroying in FViewport.ComponentState) then
       FViewport.Repaint;
   end;
@@ -1393,12 +1884,6 @@ function TSRStereoRenderer.DisplayInfo(out Info: TSRBDisplayInfo): Boolean;
 begin
   FillChar(Info, SizeOf(Info), 0);
   Result := FRunning and (srb_GetDisplayInfo(@Info) = SRB_OK);
-end;
-
-procedure TSRStereoRenderer.TraceStage(const Stage: string);
-begin
-  if FTraceLeft > 0 then
-    Log(Format('frame %d: %s', [FFrameNo, Stage]));
 end;
 
 function TSRStereoRenderer.SRDisplayRect(out R: TRect): Boolean;
@@ -1539,6 +2024,7 @@ begin
   begin
     srb_SetVisible(Vis);
     FWindowVisible := Vis;
+    UpdatePaintSkip;
   end;
   if Vis = 0 then
     Exit;
@@ -1560,11 +2046,8 @@ begin
   if (R - L <> FLastBounds.Width) or (B - T <> FLastBounds.Height) then
   begin
     if FLastBounds.Width > 0 then
-    begin
-      Log(Format('Viewport size changed from %d x %d to %d x %d physical pixels; tracing %d frames',
-        [FLastBounds.Width, FLastBounds.Height, R - L, B - T, ResizeTraceFrames]));
-      FTraceLeft := Max(FTraceLeft, ResizeTraceFrames);
-    end;
+      Log(Format('Viewport size changed from %d x %d to %d x %d physical pixels',
+        [FLastBounds.Width, FLastBounds.Height, R - L, B - T]));
   end;
   FLastBounds := TRect.Create(L, T, R, B);
   Result := srb_SetBounds(L, T, R - L, B - T) = SRB_OK;
@@ -1608,8 +2091,10 @@ begin
       // monitors of different scaling makes Windows resize it (the owner's
       // 00:39 run went from 3840 x 2160 to 3441 x 1440 that way)
       if FFullScreen then
+      begin
         ApplyFullScreen;
-      TraceStage('placing window');
+        ApplyTopmost;
+      end;
       if not UpdateWindowBounds then
         Exit;
       if not Supports(FViewport, IViewport3D, VP) then
@@ -1622,25 +2107,14 @@ begin
       H := Round(Ctx.Height);
       if (W < 2) or (H < 2) then
         Exit;
-      TraceStage(Format('context %d x %d (%.1f x %.1f), format %d', [W, H, Ctx.Width, Ctx.Height,
-        Ord(Ctx.PixelFormat)]));
 
       NowMs := FClock.Elapsed.TotalMilliseconds;
       FWorstFrameMs := Max(FWorstFrameMs, NowMs - FPrevFrameMs);
       FPrevFrameMs := NowMs;
 
-      if dsTracking in FDiagnosticSkip then
-      begin
-        EL := Point3D(0, 0, 0);
-        ER := EL;
-      end
-      else
-      begin
-        srb_GetEyePositions(L, R);
-        EL := Point3D(L[0], L[1], L[2]);
-        ER := Point3D(R[0], R[1], R[2]);
-      end;
-      TraceStage('eyes L' + FmtPt(EL) + ' R' + FmtPt(ER));
+      srb_GetEyePositions(L, R);
+      EL := Point3D(L[0], L[1], L[2]);
+      ER := Point3D(R[0], R[1], R[2]);
       FUsingNominalEyes := (EL.Z < MinEyeDistanceMM) or (ER.Z < MinEyeDistanceMM);
       if FUsingNominalEyes then
       begin
@@ -1657,7 +2131,6 @@ begin
         Mid := (EL + ER) * 0.5;
         EL := Mid - Point3D(NominalIpdMM * 0.5, 0, 0);
         ER := Mid + Point3D(NominalIpdMM * 0.5, 0, 0);
-        TraceStage('eye separation out of range; rebuilt around the midpoint');
       end;
       if FEyeSeparationMM > 0 then
       begin
@@ -1677,7 +2150,6 @@ begin
 
       if srb_GetWindowRectMM(Cx, Cy, Wmm, Hmm) <> SRB_OK then
         Exit;
-      TraceStage(Format('window c(%.1f, %.1f) %.1f x %.1f mm', [Cx, Cy, Wmm, Hmm]));
       if (Wmm <= 0) or (Hmm <= 0) then
         Exit;
       FWinCenterMM := PointF(Cx, Cy);
@@ -1692,8 +2164,7 @@ begin
         FLeftEyeMM := EL;
         FRightEyeMM := ER;
       end;
-      UpdateSettling(not (FUsingNominalEyes or FIpdRepaired or (dsTracking in FDiagnosticSkip)),
-        (EL + ER) * 0.5);
+      UpdateSettling(not (FUsingNominalEyes or FIpdRepaired), (EL + ER) * 0.5);
       UpdateLens(False);
       if not (FLensOn and FEyesSettled) then
       begin
@@ -1723,17 +2194,11 @@ begin
         Pitch := W * 2 * 4;
         if Length(FBuffer) <> Pitch * H then
           SetLength(FBuffer, Pitch * H);
-        if not (dsRender in FDiagnosticSkip) then
-        begin
-          TraceStage(Format('rendering left eye into %d-byte buffer, pitch %d', [Length(FBuffer), Pitch]));
-          RenderEye(Ctx, Cam, EL, @FBuffer[0], Pitch, FCalLeft);
-          TraceStage('rendering right eye');
-          RenderEye(Ctx, Cam, ER, @FBuffer[W * 4], Pitch, FCalRight);
-          TraceStage('both eyes copied');
-          // Put the normal camera back so picking (ObjectAtPoint, Pick) works
-          Ctx.SetCameraMatrix(Cam.CameraMatrix);
-          Ctx.SetCameraAngleOfView(Cam.AngleOfView);
-        end;
+        RenderEye(Ctx, Cam, EL, 0, @FBuffer[0], Pitch, FCalLeft);
+        RenderEye(Ctx, Cam, ER, 1, @FBuffer[W * 4], Pitch, FCalRight);
+        // Put the normal camera back so picking (ObjectAtPoint, Pick) works
+        Ctx.SetCameraMatrix(Cam.CameraMatrix);
+        Ctx.SetCameraAngleOfView(Cam.AngleOfView);
 
         if Ctx.PixelFormat = TPixelFormat.RGBA then
           Fmt := SRB_FMT_RGBA8
@@ -1742,14 +2207,10 @@ begin
         // The scene overwrote the buffer: a test image must be copied again
         FStereoImageDirty := True;
       end;
-      if dsSubmit in FDiagnosticSkip then
-        RC := SRB_S_2D_FALLBACK
+      if FZeroCopyActive and (FStereoImage = nil) then
+        RC := srb_PresentViews(W, H)   // the eyes are already in the bridge's texture
       else
-      begin
-        TraceStage('submitting');
         RC := srb_SubmitViews(@FBuffer[0], W, H, Pitch, Fmt);
-        TraceStage(Format('submitted, result %d', [RC]));
-      end;
       FWeaving := RC = SRB_OK;
       FOccluded := RC = SRB_S_OCCLUDED;
       if RC < 0 then
@@ -1766,9 +2227,6 @@ begin
       LogPeriodic;
       if Assigned(FOnEyesUpdated) then
         FOnEyesUpdated(Self, FLeftEyeMM, FRightEyeMM);
-      TraceStage('done');
-      if FTraceLeft > 0 then
-        Dec(FTraceLeft);
     except
       on E: Exception do
       begin
@@ -1781,8 +2239,330 @@ begin
   end;
 end;
 
+function TSRStereoRenderer.FmxUsesDX11: Boolean;
+var
+  VP: IViewport3D;
+begin
+  if (FViewport <> nil) and Supports(FViewport, IViewport3D, VP) and (VP.Context <> nil) then
+    Result := VP.Context is TCustomDX11Context
+  else
+    Result := (TContextManager.DefaultContextClass <> nil) and
+      TContextManager.DefaultContextClass.InheritsFrom(TCustomDX11Context);
+end;
+
+procedure TSRStereoRenderer.CheckGpus;
+var
+  C: TSRBGpuCheck;
+  RC: Integer;
+  Prog, SRGpu, Fix: string;
+begin
+  FGpuProblem := spNone;
+  FCanFixGpu := False;
+  if not FmxUsesDX11 then
+  begin
+    FGpuWarning := 'FMX is not drawing with Direct3D 11, so the GPU it uses cannot be checked and ' +
+      'every frame is copied through the CPU. Stereo will be slow.';
+    FGpuProblem := spNotDX11;
+    Log('GPU WARNING: ' + FGpuWarning);
+    Exit;
+  end;
+  if not SRBridgeHasExport('srb_GetGpuCheck') then
+  begin
+    Log('GPU check not available: this SRBridge.dll is older than 5 November 2026, 05:00');
+    Exit;
+  end;
+  Log(Format('Windows GPU preference for %s: %s', [ParamStr(0), GpuPreferenceName(GetGpuPreference)]));
+  FillChar(C, SizeOf(C), 0);
+  RC := srb_GetGpuCheck(@C);
+  Prog := UTF8ToString(PAnsiChar(@C.programAdapter[0]));
+  SRGpu := UTF8ToString(PAnsiChar(@C.srDisplayAdapter[0]));
+  Log(Format('GPUs: FMX draws on %s; the SR display is driven by %s (%d Hz); the bridge is on %s%s',
+    [StrIf(Prog = '', 'an unknown GPU', Prog), StrIf(SRGpu = '', 'an unknown GPU', SRGpu), C.srRefreshHz,
+     UTF8ToString(PAnsiChar(@C.bridgeAdapter[0])),
+     StrIf(C.sharingProgramDevice <> 0, ', sharing FMX''s device (zero copy)', '')]));
+  if FZeroCopyActive and (C.sharingProgramDevice = 0) then
+  begin
+    FZeroCopyActive := False;
+    Log('Zero copy off: the bridge did not share FMX''s device (see its log line above); ' +
+      'each eye is read back');
+  end;
+  if RC <> SRB_OK then
+    Exit;   // the SR display's GPU was not found: nothing to compare
+  Fix := 'Set this program to "High performance" in Windows Settings > System > Display > ' +
+    'Graphics (it takes effect the next time it starts).';
+  if C.programSoftware <> 0 then
+  begin
+    FGpuWarning := Format('FMX is drawing in software (%s), not on a GPU. Stereo will be very slow. ' +
+      'Check that GlobalUseDXSoftware is not set and the graphics driver is installed.', [Prog]);
+    FGpuProblem := spSoftwareGpu;
+  end
+  else if C.programOnSRAdapter = 0 then
+  begin
+    FGpuWarning := Format('FMX is drawing on %s, but the SR display is driven by %s. Every frame has ' +
+      'to cross between the GPUs, so stereo will be slow and full screen may misbehave. %s',
+      [Prog, SRGpu, Fix]);
+    FGpuProblem := spWrongGpu;
+    // The Windows preference can move FMX to another GPU, but not off software
+    FCanFixGpu := GetGpuPreference <> GpuPreferenceHighPerformance;
+  end;
+  if FGpuWarning <> '' then
+    Log('GPU WARNING: ' + FGpuWarning + ' Current preference: ' +
+      GpuPreferenceName(GetGpuPreference) + '.');
+end;
+
+procedure TSRStereoRenderer.ReportStartProblem(Problem: TSRStartProblem; const Msg: string;
+  CanDegrade, CanFixGpu: Boolean);
+var
+  Alive: TArray<Boolean>;
+begin
+  FStartProblem := Problem;
+  if not Assigned(FOnStartProblem) then
+  begin
+    Log('Start problem (' + StartProblemName(Problem) + '): carrying on without glasses-free 3D (no OnStartProblem handler)');
+    Exit;
+  end;
+  FProblemFoundMs := FClock.ElapsedMilliseconds;
+  Log(Format('Start problem (%s), found %d ms after Start was called: asking the program what to do',
+    [StartProblemName(Problem), FProblemFoundMs - FStartCalledMs]));
+  // Not from inside a frame or a start. A posted message is taken ahead of
+  // paints and timers, so it runs as soon as the current message is done;
+  // TThread.ForceQueue waited for FMX to go idle, which a busy (or software)
+  // FMX does rarely, unless the user moves the mouse.
+  if (FMsgWnd <> 0) and PostMessage(FMsgWnd, WM_SR_STARTPROBLEM, 0, 0) then
+  begin
+    FQueuedProblem := Problem;
+    FQueuedProblemMsg := Msg;
+    FQueuedCanDegrade := CanDegrade;
+    FQueuedCanFixGpu := CanFixGpu;
+    FProblemQueued := True;
+    Exit;
+  end;
+  Alive := FAlive;
+  TThread.ForceQueue(nil,
+    procedure
+    begin
+      if (Length(Alive) > 0) and Alive[0] then
+        HandleStartProblem(Problem, Msg, CanDegrade, CanFixGpu);
+    end);
+end;
+
+procedure TSRStereoRenderer.StartProbe;
+var
+  Wnd: HWND;
+  Timeout: Integer;
+begin
+  FProbing := True;
+  FProbeStartMs := FClock.ElapsedMilliseconds;
+  Wnd := FMsgWnd;
+  Timeout := Max(0, Round(FInitTimeout * 1000));
+  Log(Format('Checking for LeiaSR on a background thread (up to %d ms); the program carries on ' +
+    'without glasses-free 3D until it answers', [Timeout]));
+  TThread.CreateAnonymousThread(
+    procedure
+    var
+      RC: Integer;
+    begin
+      RC := srb_Probe(Timeout);
+      // A posted message: handled ahead of paints. If the renderer has gone,
+      // its window has too and this fails harmlessly.
+      PostMessage(Wnd, WM_SR_PROBEDONE, WPARAM(RC), 0);
+    end).Start;
+end;
+
+procedure TSRStereoRenderer.ProbeDone(RC: Integer);
+var
+  Ms: Int64;
+begin
+  FProbing := False;
+  Ms := FClock.ElapsedMilliseconds - FProbeStartMs;
+  Log(Format('LeiaSR background check: %d after %d ms%s', [RC, Ms,
+    StrIf(RC = SRB_OK, ' (service running, display found)', ': ' + SRBridgeLastError)]));
+  if not FActive or FRunning then
+  begin
+    Log('LeiaSR background check: no longer wanted (glasses-free 3D turned off meanwhile)');
+    Exit;
+  end;
+  case RC of
+    SRB_E_SR_DLL_MISSING:
+      begin
+        // The bridge could not load the runtime after all: as not installed
+        FActive := False;
+        FStartProblem := spNotInstalled;
+        Log('LeiaSR runtime could not be loaded by the bridge: glasses-free 3D is not available; ' +
+          'nothing shown to the user');
+      end;
+    SRB_E_NO_SERVICE:
+      FailStart(spNoService, 'The LeiaSR (Simulated Reality) service is not running. It normally ' +
+        'starts with Windows: restarting the SR software, or the computer, starts it again.');
+    SRB_E_NO_DISPLAY:
+      FailStart(spNoDisplay, 'No SR display was found. Check that it is switched on and connected ' +
+        '(video cable and USB), and set to its native resolution.');
+  else
+    begin
+      if RC <> SRB_OK then
+        Log('LeiaSR background check: unexpected result; starting anyway');
+      FProbeOK := True;
+      Start;   // now quick: SR is there and its DLLs are loaded
+    end;
+  end;
+end;
+
+procedure TSRStereoRenderer.MsgWndProc(var Message: Winapi.Messages.TMessage);
+var
+  Gap, NowMs: Int64;
+begin
+  if Message.Msg = WM_SR_FRAME then
+  begin
+    Message.Result := 0;
+    if FWatch = nil then
+      Exit;
+    Gap := Int64(GetTickCount64) - Int64(TFrameWatch(FWatch).LastFrameTick);
+    TFrameWatch(FWatch).Posted := 0;
+    Inc(FWatchFrames);
+    NowMs := FClock.ElapsedMilliseconds;
+    if NowMs - FWatchLoggedMs >= 5000 then
+    begin
+      Log(Format('Frame loop starved: no frame for %d ms (FMX busy repainting?), so frames are ' +
+        'also being driven by posted messages (%d since the last note)', [Gap, FWatchFrames]));
+      FWatchLoggedMs := NowMs;
+      FWatchFrames := 0;
+    end;
+    if not FInRender then
+      Tick;
+  end
+  else if Message.Msg = WM_SR_PROBEDONE then
+  begin
+    Message.Result := 0;
+    ProbeDone(Integer(Message.WParam));
+  end
+  else if Message.Msg = WM_SR_STARTPROBLEM then
+  begin
+    Message.Result := 0;
+    if FProblemQueued then
+    begin
+      FProblemQueued := False;
+      HandleStartProblem(FQueuedProblem, FQueuedProblemMsg, FQueuedCanDegrade, FQueuedCanFixGpu);
+    end;
+  end
+  else
+    Message.Result := DefWindowProc(FMsgWnd, Message.Msg, Message.WParam, Message.LParam);
+end;
+
+procedure TSRStereoRenderer.FailStart(Problem: TSRStartProblem; const Msg: string);
+begin
+  FActive := False;
+  UnhookLoop;
+  DoError(Msg);
+  ReportStartProblem(Problem, Msg, False, False);
+end;
+
+procedure TSRStereoRenderer.HandleStartProblem(Problem: TSRStartProblem; const Msg: string;
+  CanDegrade, CanFixGpu: Boolean);
+var
+  Choice: TSRStartChoice;
+begin
+  if FRunning or FStartPending or not Assigned(FOnStartProblem) then
+    Exit;   // started again meanwhile, or no longer wanted
+  Choice := scContinueWithoutSR;
+  Log(Format('Start problem: OnStartProblem called %d ms after the problem was found',
+    [FClock.ElapsedMilliseconds - FProblemFoundMs]));
+  FOnStartProblem(Self, Problem, Msg, CanDegrade, CanFixGpu, Choice);
+  if (Choice = scContinueDegraded) and not CanDegrade then
+    Choice := scContinueWithoutSR;   // nothing to accept: SR did not start at all
+  case Choice of
+    scContinueWithoutSR:
+      Log('Start problem: the program carries on without glasses-free 3D (LeiaSR off)');
+    scRetry:
+      begin
+        Log('Start problem: trying LeiaSR again');
+        Active := True;
+      end;
+    scContinueDegraded:
+      begin
+        Log('Start problem: running LeiaSR anyway (' + StartProblemName(Problem) +
+          '); AcceptDegraded set');
+        FAcceptDegraded := True;
+        Active := True;
+      end;
+    scExit:
+      begin
+        Log('Start problem: exiting the program, so the SR set-up can be fixed');
+        Application.Terminate;
+      end;
+  end;
+end;
+
+class function TSRStereoRenderer.SRInstalled: Boolean;
+begin
+  Result := SRRuntimeInstalled;
+end;
+
+function TSRStereoRenderer.CopyLeftView(Dest: TBitmap): Boolean;
+var
+  HalfW: Integer;
+begin
+  Result := (FStereoImage <> nil) and (Dest <> nil);
+  if not Result then
+    Exit;
+  HalfW := FStereoImage.Width div 2;
+  Dest.SetSize(HalfW, FStereoImage.Height);
+  Dest.CopyFromBitmap(FStereoImage, Rect(0, 0, HalfW, FStereoImage.Height), 0, 0);
+end;
+
+procedure TSRStereoRenderer.SuspendLens(Suspend: Boolean);
+begin
+  if Suspend then
+    Inc(FLensSuspendCount)
+  else if FLensSuspendCount > 0 then
+    Dec(FLensSuspendCount);
+  // At once: frames, and so UpdateLens, may not run while a message is up
+  if FRunning then
+    UpdateLens(True);
+end;
+
+function TSRStereoRenderer.SetHighPerformanceGpu: Boolean;
+begin
+  Result := SetGpuPreference(GpuPreferenceHighPerformance);
+  if Result then
+    Log('Windows GPU preference for ' + ExtractFileName(ParamStr(0)) +
+      ' set to High performance; it takes effect at the next start')
+  else
+    Log('Could not set the Windows GPU preference for ' + ExtractFileName(ParamStr(0)));
+end;
+
+function TSRStereoRenderer.CopyEyeOnGpu(EyeIndex, W, H: Integer): Boolean;
+var
+  RTV: ID3D11RenderTargetView;
+  DSV: ID3D11DepthStencilView;
+  Res: ID3D11Resource;
+  RC: Integer;
+begin
+  Result := False;
+  // FMX binds its target in BeginScene and resolves a multisampled one in
+  // EndScene; the bridge resolves it itself if needed. The copy is queued
+  // on the same device context, after FMX's drawing.
+  TCustomDX11Context.SharedContext.OMGetRenderTargets(1, RTV, DSV);
+  if RTV = nil then
+  begin
+    FZeroCopyActive := False;
+    Log('Zero copy off: FMX had no render target bound; reading eyes back from now on');
+    Exit;
+  end;
+  RTV.GetResource(Res);
+  RC := srb_CopyEyeTexture(EyeIndex, Pointer(Res), W, H);
+  if RC <> SRB_OK then
+  begin
+    FZeroCopyActive := False;
+    Log(Format('Zero copy off: srb_CopyEyeTexture failed (%d): %s; reading eyes back from now on',
+      [RC, SRBridgeLastError]));
+    Exit;
+  end;
+  Result := True;
+end;
+
 procedure TSRStereoRenderer.RenderEye(const Ctx: TContext3D; const RefCamera: TCamera;
-  const EyeMM: TPoint3D; Dest: Pointer; Pitch: Integer; out Cal: TSREyeCalibration);
+  const EyeMM: TPoint3D; EyeIndex: Integer; Dest: Pointer; Pitch: Integer;
+  out Cal: TSREyeCalibration);
 var
   RefView, EyeView, OffAxis, Proj: TMatrix3D;
   V: TVector3D;
@@ -1802,10 +2582,7 @@ var
 begin
   FillChar(Cal, SizeOf(Cal), 0);
   if not Ctx.BeginScene then
-  begin
-    TraceStage('  BeginScene returned False');
     Exit;
-  end;
   try
     { How FMX draws (FMX.Types3D, Delphi 13): the shaders get
         CurrentMatrix * CurrentCameraMatrix * CurrentProjectionMatrix,
@@ -1871,16 +2648,13 @@ begin
       RefView.Inverse * Ctx.CurrentCameraMatrix * Ctx.CurrentProjectionMatrix;
     if V.W <> 0 then
       Cal.CornerNdc := PointF(V.X / V.W, V.Y / V.W);
-    TraceStage(Format('  projection set: scale %.5f zoom %.4f shear (%.4f, %.4f) corner (%.4f, %.4f)',
-      [Cal.Scale, Cal.Zoom, Cal.ShearX, Cal.ShearY, Cal.CornerNdc.X, Cal.CornerNdc.Y]));
     RenderScene(Ctx);
-    TraceStage('  scene rendered');
+    if FZeroCopyActive and CopyEyeOnGpu(EyeIndex, Round(Ctx.Width), Round(Ctx.Height)) then
+      Exit;   // the finally still ends the scene
   finally
     Ctx.EndScene;
   end;
-  TraceStage(Format('  copying %d x %d to buffer', [Round(Ctx.Width), Round(Ctx.Height)]));
   Ctx.CopyToBits(Dest, Pitch, Rect(0, 0, Round(Ctx.Width), Round(Ctx.Height)));
-  TraceStage('  copied');
 end;
 
 procedure TSRStereoRenderer.RenderScene(const Ctx: TContext3D);
@@ -1909,6 +2683,33 @@ begin
     Child := FViewport.Children[I];
     if (Child is TControl3D) and TControl3D(Child).Visible then
       TControl3D(Child).RenderInternal;
+  end;
+end;
+
+procedure TSRViewport3D.Paint;
+begin
+  if not FSkipPaint then
+    inherited Paint;
+end;
+
+procedure TSRStereoRenderer.UpdatePaintSkip;
+var
+  Skip: Boolean;
+begin
+  if not (FViewport is TSRViewport3D) then
+    Exit;
+  Skip := FSkipViewportPaint and FRunning and (FWindowVisible = 1) and
+    not (csDestroying in FViewport.ComponentState);
+  if Skip = TSRViewport3D(FViewport).SkipPaint then
+    Exit;
+  TSRViewport3D(FViewport).SkipPaint := Skip;
+  if Skip then
+    Log('FMX''s own drawing of the viewport left out: the bridge''s window covers it')
+  else
+  begin
+    Log('FMX draws the viewport itself again');
+    if not (csDestroying in FViewport.ComponentState) then
+      FViewport.Repaint;
   end;
 end;
 

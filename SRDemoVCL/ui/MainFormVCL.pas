@@ -22,7 +22,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes, System.Types,
   System.Diagnostics, Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls,
-  Vcl.ComCtrls, SRSettings, SRStereoImage, SRBridge.Api;
+  Vcl.ComCtrls, SRSettings, SRStereoImage, SRBridge.Api, SRStartProblem;
 
 type
   { What the lens does: as SRDemoFMX's @code(LensMode). }
@@ -43,7 +43,8 @@ type
     procedure FormDestroy(Sender: TObject);
     { Starts the bridge once the window is on screen. }
     procedure FormShow(Sender: TObject);
-    { F11 toggles full screen; Esc leaves it. }
+    { F11 toggles full screen, Esc leaves it; Page Up and Page Down move the
+      scene, Home puts it back; R starts and stops the grid's spin. }
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
   private
     { The toolbar. }
@@ -56,20 +57,48 @@ type
     FStatus: TStatusBar;
     { Weaving on or off (starts and stops the bridge). }
     FWeave: TCheckBox;
+    { Whether the background check of LeiaSR is running. }
+    FProbing: Boolean;
+    { Whether it found SR ready; used up by the next @link(StartBridge). }
+    FProbeOK: Boolean;
+    { When it started, ms on @code(FClock). }
+    FProbeStartMs: Int64;
     { What to show: the 3D scene, the test pattern or an image. }
     FShow: TComboBox;
     { Turn the cube. }
     FRotate: TCheckBox;
     { Look-around on, or a fixed viewer. }
     FLookAround: TCheckBox;
-    { Depth: the eye separation scale, 10 to 150 percent. }
-    FDepth: TTrackBar;
-    { Shows the depth value. }
-    FDepthLabel: TLabel;
-    { Eye separation, 0 (tracked) to 80 mm. }
-    FSeparation: TTrackBar;
-    { Shows the separation value. }
-    FSeparationLabel: TLabel;
+    { How far the scene is moved away from the viewer, world units
+      (negative: towards). }
+    FSceneZ: Single;
+    { The scene's tilt about the horizontal axis through the main sphere,
+      degrees. }
+    FSceneTilt: Single;
+    { The scene's roll about the depth axis through the main sphere,
+      degrees. }
+    FSceneRoll: Single;
+    { The sphere grid's turn about the vertical axis, degrees. }
+    FGridSpin: Single;
+    { Whether the grid is spinning (R). }
+    FGridSpinning: Boolean;
+    { Whether a left-button drag is turning the scene. }
+    FTilting: Boolean;
+    { The pointer and the tilt and roll when the drag started. }
+    FTiltStartX, FTiltStartY: Integer;
+    { The tilt and roll when the drag started, degrees. }
+    FTiltStartAngle, FRollStartAngle: Single;
+    { The last second's frame rate, drawn on the glass; -1 before the
+      first. }
+    FLastFps: Integer;
+    { A hidden window for posted messages: it stays the same when the form's
+      window is made again (full screen), and a message to it after it has gone
+      is dropped. }
+    FMsgWnd: HWND;
+    { The start problem to ask about. }
+    FProblem: TSRStartProblem;
+    { Its message. }
+    FProblemMsg: string;
     { View size: the viewport's, or half of it. }
     FViewSize: TComboBox;
     { When the lens is on. }
@@ -130,6 +159,40 @@ type
 
     { Builds the toolbar, viewport, log and status line. }
     procedure BuildControls;
+    { Opens the settings dialog (the eye separation), with the lens off.
+      @param(Sender the button) }
+    procedure SettingsClick(Sender: TObject);
+    { The mouse wheel moves the scene, as in SRDemoFMX: away for a forward
+      turn, towards for a backward one; Shift for small steps.
+      @param(Sender the form) @param(Shift the modifier keys)
+      @param(WheelDelta 120 per notch, positive forwards)
+      @param(MousePos the pointer, screen pixels)
+      @param(Handled set when used) }
+    procedure FormMouseWheel(Sender: TObject; Shift: TShiftState; WheelDelta: Integer;
+      MousePos: TPoint; var Handled: Boolean);
+    { Starts turning the scene on a left-button press over the viewport.
+      @param(Sender the viewport) @param(Button which button)
+      @param(Shift the modifier keys) @param(X pointer x) @param(Y pointer y) }
+    procedure ViewportMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState;
+      X, Y: Integer);
+    { Turns the scene while the left button is held: up and down tilts it,
+      left and right rolls it, about the main sphere.
+      @param(Sender the viewport) @param(Shift the modifier keys)
+      @param(X pointer x) @param(Y pointer y) }
+    procedure ViewportMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+    { Ends the turn and logs it.
+      @param(Sender the viewport) @param(Button which button)
+      @param(Shift the modifier keys) @param(X pointer x) @param(Y pointer y) }
+    procedure ViewportMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState;
+      X, Y: Integer);
+    { Moves the scene in depth, or puts it (and its tilt and roll) back.
+      @param(Delta world units; negative is towards the viewer)
+      @param(Reset @true puts it back as built, ignoring Delta) }
+    procedure MoveScene(Delta: Single; Reset: Boolean);
+    { The status bar's depth line: the middle column of spheres' distances
+      in mm in front of the glass, and where the scene is.
+      @returns(the text, empty before the first frame) }
+    function DepthText: string;
     { Adds a label to the toolbar. @param(Text its text) @returns(the label) }
     function AddLabel(const Text: string): TLabel;
     { Puts the saved settings into the controls. }
@@ -150,6 +213,32 @@ type
     procedure StartBridge;
     { Finalises the bridge. }
     procedure StopBridge;
+    { Runs @code(srb_Probe) on a background thread (up to 5 s); its answer
+      goes to @link(ProbeDone) through the main thread's queue. }
+    procedure StartProbe;
+    { The background check's answer: starts the bridge if SR is ready, or
+      asks the user what to do.
+      @param(RC what @code(srb_Probe) returned) }
+    procedure ProbeDone(RC: Integer);
+    { Ticks or unticks Weave without its OnClick, so neither the bridge nor
+      the saved choice changes: for failed starts and loading settings.
+      @param(Value whether it is ticked) }
+    procedure SetWeaveQuietly(Value: Boolean);
+    { After a failed start, once the current event is done: asks the user
+      (a dialog centred on the window) whether to carry on without
+      glasses-free 3D, try again or exit. The scene is drawn by the bridge, so
+      there is no "anyway" choice.
+      @param(Problem what went wrong)
+      @param(Msg the details) }
+    procedure AskAfterStartFailure(Problem: TSRStartProblem; const Msg: string);
+    { Asks the user about the start problem in @link(FProblem) and
+      @link(FProblemMsg): on @code(WM_SR_STARTPROBLEM), so not from inside the
+      click or timer that started it. }
+    procedure HandleStartProblem;
+    { Handles the hidden window's messages: @code(WM_SR_STARTPROBLEM) and
+      @code(WM_SR_PROBEDONE) (its @code(WPARAM) the check's result).
+      @param(Msg the message) }
+    procedure MsgWndProc(var Msg: TMessage);
     { Moves the window onto the SR display if it is elsewhere. }
     procedure PlaceOnSRDisplay;
     { Turns full screen on or off. @param(Value @true for full screen) }
@@ -182,17 +271,41 @@ implementation
 
 uses
   Winapi.MultiMon, System.Math, System.StrUtils, System.IOUtils,
-  SRDiagLog;
+  SRDiagLog, SRSettingsDialog;
 
 const
   { Most lines kept in the log panel. }
   MaxLogLines = 2000;
   { How long the lens must have wanted a change before it is made, ms. }
   LensSwitchDelayMs = 250;
-  { The cube's turning speed, radians a second. }
-  TurnSpeed = 0.6;
-  { The bridge export SRDemoVCL needs. }
-  SceneExport = 'srb_RenderScene';
+  { The cubes' turning speed, radians a second: a turn in 8 s, as
+    SRDemoFMX's. }
+  TurnSpeed = 2 * Pi / 8;
+  { The grid's turning speed, degrees a second: a turn in 20 s, the other
+    way, as SRDemoFMX's. }
+  GridSpinSpeed = -360 / 20;
+  { How far the wheel moves the scene per notch, world units. }
+  SceneStep = 1.0;
+  { Furthest the scene can be pulled towards the viewer, world units. }
+  SceneZMin = -20.0;
+  { Furthest the scene can be pushed away, world units. }
+  SceneZMax = 20.0;
+  { Degrees the scene tilts or rolls per pixel of a left-button drag. }
+  TiltPerPixel = 0.25;
+  { Most the scene can tilt either way, degrees. }
+  TiltMax = 85.0;
+  { Most the scene can roll either way, degrees. }
+  RollMax = 180.0;
+  { The viewport's height on the glass in world units (FMX's camera 20
+    units back at 45 degrees), for converting to mm. }
+  WorldViewHeight = 16.5685;
+  { Spheres each side of the main one, and their spacing, world units. }
+  RowHalf = 5;
+  { See @link(RowHalf). }
+  RowStep = 3.0;
+  { The bridge export SRDemoVCL needs: only in bridges that draw
+    SRDemoFMX's scene (5 November 2026, 08:40 or later). }
+  SceneExport = 'srb_SceneParamsSize';
 
 procedure TfrmMainVCL.AddLog(const Msg: string);
 begin
@@ -223,6 +336,8 @@ begin
 end;
 
 procedure TfrmMainVCL.BuildControls;
+var
+  Btn: TButton;
 
   { Places a control at the right-hand end of the toolbar.
     @param(C the control) @param(Width its width) }
@@ -266,6 +381,10 @@ begin
   FViewport.ParentBackground := False;
   FViewport.Color := $00100808;
   FViewport.Font.Color := $00C0C0C0;
+  FViewport.OnMouseDown := ViewportMouseDown;
+  FViewport.OnMouseMove := ViewportMouseMove;
+  FViewport.OnMouseUp := ViewportMouseUp;
+  OnMouseWheel := FormMouseWheel;
 
   FWeave := TCheckBox.Create(Self);
   Dock(FWeave, 70);
@@ -290,23 +409,10 @@ begin
   FLookAround.Caption := 'Look-around';
   FLookAround.OnClick := ControlChanged;
 
-  FDepthLabel := AddLabel('Depth 100%');
-  FDepth := TTrackBar.Create(Self);
-  Dock(FDepth, 140);
-  FDepth.Min := 10;
-  FDepth.Max := 150;
-  FDepth.Frequency := 10;
-  FDepth.Position := 100;
-  FDepth.OnChange := ControlChanged;
-
-  FSeparationLabel := AddLabel('Eyes 63 mm');
-  FSeparation := TTrackBar.Create(Self);
-  Dock(FSeparation, 140);
-  FSeparation.Min := 0;
-  FSeparation.Max := 80;
-  FSeparation.Frequency := 10;
-  FSeparation.Position := 63;
-  FSeparation.OnChange := ControlChanged;
+  Btn := TButton.Create(Self);
+  Dock(Btn, 90);
+  Btn.Caption := 'Settings...';
+  Btn.OnClick := SettingsClick;
 
   AddLabel('Views');
   FViewSize := TComboBox.Create(Self);
@@ -392,9 +498,8 @@ begin
   FLoading := True;
   try
     FLookAround.Checked := FSettings.LookAround;
-    FDepth.Position := EnsureRange(Round(FSettings.EyeSeparationScale * 100), FDepth.Min, FDepth.Max);
-    FSeparation.Position := EnsureRange(Round(FSettings.EyeSeparationMM), 0, FSeparation.Max);
     FLens.ItemIndex := EnsureRange(FSettings.LensMode, 0, FLens.Items.Count - 1);
+    SetWeaveQuietly(FSettings.UseGlassesFree3D);   // the click would start the bridge now
     if FSettings.StereoImage <> '' then
     begin
       I := FShow.Items.IndexOf(FSettings.StereoImage);
@@ -412,8 +517,7 @@ begin
   if FLoading or (FSettings = nil) then
     Exit;
   FSettings.LookAround := FLookAround.Checked;
-  FSettings.EyeSeparationScale := FDepth.Position / 100;
-  FSettings.EyeSeparationMM := FSeparation.Position;
+  FSettings.EyeSeparationScale := 1;   // the real eye separation; the Depth slider is gone
   FSettings.LensMode := FLens.ItemIndex;
   if FShow.ItemIndex >= 2 then
     FSettings.StereoImage := FShow.Text
@@ -430,20 +534,15 @@ end;
 
 procedure TfrmMainVCL.ControlChanged(Sender: TObject);
 begin
-  FDepthLabel.Caption := Format('Depth %d%%', [FDepth.Position]);
-  if FSeparation.Position = 0 then
-    FSeparationLabel.Caption := 'Eyes tracked'
-  else
-    FSeparationLabel.Caption := Format('Eyes %d mm', [FSeparation.Position]);
   if Sender = FShow then
     LoadShownImage;
   if Sender = FViewSize then
     FImageDirty := True;
   if (Sender <> nil) and not FLoading then
   begin
-    AddLog(Format('Settings: show %s, rotate %s, look-around %s, depth %d%%, eyes %s, views %s, lens %s',
+    AddLog(Format('Settings: show %s, rotate %s, look-around %s, eyes %s, views %s, lens %s',
       [FShow.Text, BoolToStr(FRotate.Checked, True), BoolToStr(FLookAround.Checked, True),
-       FDepth.Position, IfThen(FSeparation.Position = 0, 'tracked', IntToStr(FSeparation.Position) + ' mm'),
+       IfThen(FSettings.EyeSeparationMM = 0, 'tracked', Format('%.0f mm', [FSettings.EyeSeparationMM])),
        FViewSize.Text, FLens.Text]));
     SaveSettings;
   end;
@@ -451,10 +550,12 @@ end;
 
 procedure TfrmMainVCL.FormCreate(Sender: TObject);
 begin
+  FMsgWnd := System.Classes.AllocateHWnd(MsgWndProc);
   FClock := TStopwatch.StartNew;
   FImageFiles := TStringList.Create;
   FImage := TSRStereoImage.Create;
   FLensWantSinceMs := -1;
+  FLastFps := -1;
   BuildControls;
   AddLog('SRDemoVCL: the 3D scene is drawn by the bridge on the GPU; nothing is read back');
   FindImages;
@@ -468,6 +569,18 @@ begin
   end;
   SettingsToControls;
   LoadShownImage;
+  if not SRRuntimeInstalled then
+  begin
+    // As if the program had no SR support: nothing to start, nothing said
+    AddLog('LeiaSR runtime not installed: Weave hidden, LeiaSR not started');
+    SetWeaveQuietly(False);
+    FWeave.Visible := False;
+  end
+  else if not FWeave.Checked then
+  begin
+    AddLog('Glasses-free 3D is off in the settings (useGlassesFree3D false): LeiaSR not started');
+    FViewport.Caption := 'Glasses-free 3D off: tick Weave to use it';
+  end;
   FStartTimer := TTimer.Create(Self);
   FStartTimer.Enabled := False;
   FStartTimer.Interval := 100;
@@ -476,6 +589,9 @@ end;
 
 procedure TfrmMainVCL.FormDestroy(Sender: TObject);
 begin
+  if FMsgWnd <> 0 then
+    System.Classes.DeallocateHWnd(FMsgWnd);
+  FMsgWnd := 0;
   Application.OnIdle := nil;
   StopBridge;
   FreeAndNil(FSettings);
@@ -497,6 +613,17 @@ end;
 
 procedure TfrmMainVCL.WeaveClicked(Sender: TObject);
 begin
+  if (FSettings <> nil) and (FSettings.UseGlassesFree3D <> FWeave.Checked) then
+  begin
+    // The user's choice, kept for the next start
+    FSettings.UseGlassesFree3D := FWeave.Checked;
+    try
+      FSettings.Save;
+    except
+      on E: Exception do
+        AddLog('Settings not saved: ' + E.Message);
+    end;
+  end;
   if FWeave.Checked then
     StartBridge
   else
@@ -511,33 +638,47 @@ var
   RC: Integer;
   R: TSRBRect;
   Info: TSRBDisplayInfo;
+  Gpus: TSRBGpuCheck;
 begin
   if FRunning then
     Exit;
   if not SRBridgeAvailable then
   begin
     AddLog('Bridge not available: ' + SRBridgeLastError);
+    SetWeaveQuietly(False);
     FViewport.Caption := SRBridgeLastError;
-    FWeave.Checked := False;
+    AskAfterStartFailure(spBridgeMissing, SRBridgeLastError);
     Exit;
   end;
   DiagLogAttachBridge;
-  if not SRBridgeHasExport(SceneExport) then
+  if not SRBridgeHasExport(SceneExport) or (srb_SceneParamsSize <> SizeOf(TSRBSceneParams)) then
   begin
-    AddLog('This SRBridge.dll has no srb_RenderScene: rebuild the bridge (5 November 2026, ' +
-      '03:30 or later)');
+    AddLog('This SRBridge.dll is too old: it draws the old scene, not SRDemoFMX''s. Rebuild the ' +
+      'bridge (5 November 2026, 08:40 or later)');
+    SetWeaveQuietly(False);
     FViewport.Caption := 'SRBridge.dll is too old: rebuild the bridge';
-    FWeave.Checked := False;
+    AskAfterStartFailure(spBridgeMissing, 'This SRBridge.dll is too old (it has no ' + SceneExport +
+      '): rebuild the bridge.');
     Exit;
   end;
+  // The wait for SR (a service starting, a display) happens on a background
+  // thread, so the window keeps working; the scene comes on when it answers
+  if SRBridgeHasExport('srb_Probe') and not FProbeOK then
+  begin
+    if not FProbing then
+      StartProbe;
+    Exit;
+  end;
+  FProbeOK := False;   // used up: the next start checks again
   srb_SetVSync(1);
   AddLog('Starting LeiaSR (timeout 5 s)');
   RC := srb_Initialize(Pointer(FViewport.Handle), 5.0);
   if RC <> SRB_OK then
   begin
     AddLog(Format('LeiaSR initialisation failed (%d): %s', [RC, SRBridgeLastError]));
+    SetWeaveQuietly(False);
     FViewport.Caption := 'LeiaSR initialisation failed: ' + SRBridgeLastError;
-    FWeave.Checked := False;
+    AskAfterStartFailure(spStartFailed, SRBridgeLastError);
     Exit;
   end;
   FRunning := True;
@@ -552,6 +693,14 @@ begin
   FSRRectKnown := srb_GetDisplayRect(R) = SRB_OK;
   if FSRRectKnown then
     FSRRect := Rect(R[0], R[1], R[2], R[3]);
+  if SRBridgeHasExport('srb_GetGpuCheck') then
+  begin
+    FillChar(Gpus, SizeOf(Gpus), 0);
+    srb_GetGpuCheck(@Gpus);
+    AddLog(Format('GPUs: the bridge draws on %s; the SR display is driven by %s (%d Hz)%s',
+      [UTF8ToString(PAnsiChar(@Gpus.bridgeAdapter[0])), UTF8ToString(PAnsiChar(@Gpus.srDisplayAdapter[0])),
+       Gpus.srRefreshHz, IfThen(Gpus.bridgeOnSRAdapter = 0, ' - NOT the same GPU: stereo will be slow', '')]));
+  end;
   FLensOn := True;
   srb_SetLens(1);
   FBounds := TSize.Create(0, 0);
@@ -563,6 +712,117 @@ begin
   if FSettings.FullScreen and not FFullScreen then
     SetFullScreen(True);
   Application.OnIdle := AppIdle;
+end;
+
+const
+  { Posted to the hidden window: ask about the start problem. }
+  WM_SR_STARTPROBLEM = WM_APP + 1;
+  { Posted to the hidden window by the background check, its result in
+    @code(WPARAM). }
+  WM_SR_PROBEDONE = WM_APP + 2;
+
+procedure TfrmMainVCL.AskAfterStartFailure(Problem: TSRStartProblem; const Msg: string);
+begin
+  AddLog('Start problem (' + StartProblemName(Problem) + '): asking the user');
+  FProblem := Problem;
+  FProblemMsg := Msg;
+  // Not from inside the click or timer that started it
+  if (FMsgWnd = 0) or not PostMessage(FMsgWnd, WM_SR_STARTPROBLEM, 0, 0) then
+    HandleStartProblem;
+end;
+
+procedure TfrmMainVCL.HandleStartProblem;
+var
+  Fix: Boolean;
+begin
+  if FRunning then
+    Exit;
+  case AskStartProblem(Handle, 'SRDemoVCL', FProblem, FProblemMsg, False, '', Fix) of
+    scRetry:
+      begin
+        AddLog('Start problem: the user chose to try again');
+        if FWeave.Checked then
+          StartBridge
+        else
+          FWeave.Checked := True;   // its OnClick starts the bridge
+      end;
+    scExit:
+      begin
+        AddLog('Start problem: the user chose to exit, to fix the SR set-up');
+        Close;
+      end;
+  else
+    AddLog('Start problem: the user chose to carry on without glasses-free 3D');
+  end;
+end;
+
+procedure TfrmMainVCL.MsgWndProc(var Msg: TMessage);
+begin
+  case Msg.Msg of
+    WM_SR_STARTPROBLEM:
+      HandleStartProblem;
+    WM_SR_PROBEDONE:
+      ProbeDone(Integer(Msg.WParam));
+  else
+    Msg.Result := DefWindowProc(FMsgWnd, Msg.Msg, Msg.WParam, Msg.LParam);
+  end;
+end;
+
+procedure TfrmMainVCL.StartProbe;
+var
+  Wnd: HWND;
+begin
+  Wnd := FMsgWnd;
+  FProbing := True;
+  FProbeStartMs := FClock.ElapsedMilliseconds;
+  FViewport.Caption := 'Checking for LeiaSR...';
+  AddLog('Checking for LeiaSR on a background thread (up to 5 s)');
+  TThread.CreateAnonymousThread(
+    procedure
+    begin
+      // Dropped if the window has gone by then
+      PostMessage(Wnd, WM_SR_PROBEDONE, WPARAM(srb_Probe(5000)), 0);
+    end).Start;
+end;
+
+procedure TfrmMainVCL.ProbeDone(RC: Integer);
+begin
+  FProbing := False;
+  AddLog(Format('LeiaSR background check: %d after %d ms%s', [RC, FClock.ElapsedMilliseconds - FProbeStartMs,
+    IfThen(RC = SRB_OK, ' (service running, display found)', ': ' + SRBridgeLastError)]));
+  if FRunning or not FWeave.Checked then
+  begin
+    AddLog('LeiaSR background check: no longer wanted (Weave unticked meanwhile)');
+    FViewport.Caption := 'Weaving off';
+    Exit;
+  end;
+  if RC = SRB_OK then
+  begin
+    FProbeOK := True;
+    StartBridge;   // now quick: SR is there and its DLLs are loaded
+    Exit;
+  end;
+  SetWeaveQuietly(False);
+  FViewport.Caption := 'Glasses-free 3D could not be started: ' + SRBridgeLastError;
+  case RC of
+    SRB_E_NO_SERVICE: AskAfterStartFailure(spNoService, 'The LeiaSR (Simulated Reality) service ' +
+      'is not running. It normally starts with Windows: restarting the SR software, or the ' +
+      'computer, starts it again.');
+    SRB_E_NO_DISPLAY: AskAfterStartFailure(spNoDisplay, 'No SR display was found. Check that it ' +
+      'is switched on and connected (video cable and USB), and set to its native resolution.');
+  else
+    AskAfterStartFailure(spStartFailed, SRBridgeLastError);
+  end;
+end;
+
+procedure TfrmMainVCL.SetWeaveQuietly(Value: Boolean);
+begin
+  FWeave.OnClick := nil;
+  try
+    FWeave.Checked := Value;
+  finally
+    FWeave.OnClick := WeaveClicked;
+  end;
 end;
 
 procedure TfrmMainVCL.StopBridge;
@@ -649,16 +909,142 @@ end;
 
 procedure TfrmMainVCL.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
-  if Key = VK_F11 then
-  begin
-    SetFullScreen(not FFullScreen);
-    Key := 0;
-  end
-  else if (Key = VK_ESCAPE) and FFullScreen then
-  begin
-    SetFullScreen(False);
-    Key := 0;
+  case Key of
+    VK_F11:
+      SetFullScreen(not FFullScreen);
+    VK_ESCAPE:
+      if FFullScreen then
+        SetFullScreen(False)
+      else
+        Exit;
+    VK_PRIOR:
+      MoveScene(SceneStep, False);
+    VK_NEXT:
+      MoveScene(-SceneStep, False);
+    VK_HOME:
+      MoveScene(0, True);
+    Ord('R'):
+      begin
+        FGridSpinning := not FGridSpinning;
+        AddLog(Format('Grid spin about the vertical axis %s (R), at %.0f degrees',
+          [IfThen(FGridSpinning, 'started', 'stopped'), FGridSpin]));
+      end;
+  else
+    Exit;
   end;
+  Key := 0;
+end;
+
+procedure TfrmMainVCL.SettingsClick(Sender: TObject);
+var
+  MM: Integer;
+begin
+  MM := Round(FSettings.EyeSeparationMM);
+  // The lens off while the dialog is up, so it can be read
+  if FRunning then
+    srb_SetLens(0);
+  try
+    if not AskEyeSeparation(Handle, 'SRDemoVCL', MM) then
+      Exit;
+  finally
+    if FRunning then
+      srb_SetLens(Ord(FLensOn));
+  end;
+  FSettings.EyeSeparationMM := MM;
+  AddLog(IfThen(MM = 0, 'Eye separation: as tracked', Format('Eye separation: %d mm', [MM])));
+  SaveSettings;
+end;
+
+procedure TfrmMainVCL.FormMouseWheel(Sender: TObject; Shift: TShiftState; WheelDelta: Integer;
+  MousePos: TPoint; var Handled: Boolean);
+var
+  Step: Single;
+begin
+  // A list under the pointer keeps its own wheel
+  if (ActiveControl is TComboBox) and TComboBox(ActiveControl).DroppedDown then
+    Exit;
+  Step := SceneStep;
+  if ssShift in Shift then
+    Step := Step * 0.25;
+  MoveScene(Step * WheelDelta / 120, False);
+  Handled := True;
+end;
+
+procedure TfrmMainVCL.ViewportMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  if Button <> mbLeft then
+    Exit;
+  FTilting := True;
+  FTiltStartX := X;
+  FTiltStartY := Y;
+  FTiltStartAngle := FSceneTilt;
+  FRollStartAngle := FSceneRoll;
+end;
+
+procedure TfrmMainVCL.ViewportMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+begin
+  if not FTilting then
+    Exit;
+  // Up tilts the far side down, as when the viewer stands up; right rolls
+  // the scene clockwise (as SRDemoFMX)
+  FSceneTilt := EnsureRange(FTiltStartAngle + (FTiltStartY - Y) * TiltPerPixel, -TiltMax, TiltMax);
+  FSceneRoll := EnsureRange(FRollStartAngle + (X - FTiltStartX) * TiltPerPixel, -RollMax, RollMax);
+end;
+
+procedure TfrmMainVCL.ViewportMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  if (Button <> mbLeft) or not FTilting then
+    Exit;
+  FTilting := False;
+  AddLog(Format('Scene tilted %.1f and rolled %.1f degrees about the main sphere (left-drag; Home ' +
+    'levels it)', [FSceneTilt, FSceneRoll]) + IfThen(DepthText = '', '', ': ' + DepthText));
+end;
+
+procedure TfrmMainVCL.MoveScene(Delta: Single; Reset: Boolean);
+begin
+  if Reset then
+  begin
+    FSceneZ := 0;
+    FSceneTilt := 0;
+    FSceneRoll := 0;
+    AddLog('Scene back as built: depth, tilt and roll 0');
+    Exit;
+  end;
+  FSceneZ := EnsureRange(FSceneZ + Delta, SceneZMin, SceneZMax);
+  AddLog(Format('Scene moved to Z %.2f world units', [FSceneZ]) +
+    IfThen(DepthText = '', '', ': ' + DepthText));
+end;
+
+function TfrmMainVCL.DepthText: string;
+var
+  U, Z, ZRot, A, T: Double;
+  J: Integer;
+  Parts: string;
+begin
+  Result := '';
+  if FLastInfo.windowHeight <= 0 then
+    Exit;
+  // mm per world unit, as the bridge draws it
+  U := FLastInfo.windowHeight / WorldViewHeight;
+  A := DegToRad(FGridSpin);
+  T := DegToRad(FSceneTilt);
+  Parts := '';
+  // The middle column (x 0) from the main sphere to the nearest: turned
+  // with the grid, then tilted (the roll leaves depth alone), then moved
+  for J := 0 downto -RowHalf do
+  begin
+    Z := J * RowStep;
+    ZRot := Z * Cos(A) * Cos(T) + FSceneZ;
+    if Parts <> '' then
+      Parts := Parts + ' ';
+    Parts := Parts + Format('%.0f', [-ZRot * U]);
+  end;
+  Z := RowHalf * RowStep;
+  Result := Format('depths %s mm in front of the glass (green to red), furthest blue %.0f mm behind, ' +
+    'scene Z %.2f, tilt %.0f, roll %.0f deg', [Parts, (Z * Cos(A) * Cos(T) + FSceneZ) * U, FSceneZ,
+    FSceneTilt, FSceneRoll]);
 end;
 
 function TfrmMainVCL.ViewSizeFor(W, H: Integer): TSize;
@@ -766,14 +1152,21 @@ begin
   begin
     if FRotate.Checked then
       FRotation := FRotation + TurnSpeed * Dt / 1000;
+    if FGridSpinning then
+      FGridSpin := FMod(FGridSpin + GridSpinSpeed * Dt / 1000, 360);
     FillChar(P, SizeOf(P), 0);
     P.viewWidth := V.cx;
     P.viewHeight := V.cy;
     P.rotation := FRotation;
-    P.eyeSeparationMM := FSeparation.Position;
-    P.depthScale := FDepth.Position / 100;
+    P.eyeSeparationMM := FSettings.EyeSeparationMM;
+    P.depthScale := 1;
     P.lookAround := Ord(FLookAround.Checked);
     P.flat := Ord(not FLensOn);
+    P.fps := FLastFps;
+    P.sceneZ := FSceneZ;
+    P.tiltDeg := FSceneTilt;
+    P.rollDeg := FSceneRoll;
+    P.gridSpinDeg := FGridSpin;
     RC := srb_RenderScene(@P, @Info);
     if RC >= 0 then
       FLastInfo := Info;
@@ -788,13 +1181,14 @@ begin
   if NowMs - FLastStatusMs >= 1000 then
   begin
     Secs := (NowMs - FLastStatusMs) / 1000;
-    FStatus.SimpleText := Format('%.0f fps   views %d x %d   eyes L(%.0f, %.0f, %.0f) R(%.0f, %.0f, %.0f) mm%s%s   %s',
+    FLastFps := Round(FFrames / Secs);
+    FStatus.SimpleText := Format('%.0f fps   views %d x %d   eyes L(%.0f, %.0f, %.0f) R(%.0f, %.0f, %.0f) mm%s%s   %s   %s',
       [FFrames / Secs, V.cx, V.cy,
        FLastInfo.leftEye[0], FLastInfo.leftEye[1], FLastInfo.leftEye[2],
        FLastInfo.rightEye[0], FLastInfo.rightEye[1], FLastInfo.rightEye[2],
        IfThen(FLastInfo.nominalEyes <> 0, '  (no eyes yet)', ''),
        IfThen(FLastInfo.separationRebuilt <> 0, '  (63 mm used)', ''),
-       IfThen(FLensOn, 'lens on', 'lens off')]);
+       IfThen(FLensOn, 'lens on', 'lens off'), DepthText]);
     FLastStatusMs := NowMs;
     if NowMs - FLastSummaryMs >= 5000 then
     begin

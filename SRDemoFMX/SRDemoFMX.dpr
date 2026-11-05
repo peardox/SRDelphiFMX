@@ -18,6 +18,9 @@
       copies it there), and writes @code(SRDemoFMX_FastMM.log).)
   )
 
+  The @code(/warp) switch makes FMX draw in software, to test the GPU
+  warning (@link(TSRStereoRenderer.OnGpuWarning)) on any machine.
+
   Build for Windows 64-bit; the SR runtime is 64-bit only. }
 program SRDemoFMX;
 
@@ -25,12 +28,16 @@ uses
   FastMM5 in '..\FastMM5\FastMM5.pas',
   System.StartUpCopy,
   System.SysUtils,
+  FMX.Types,
   FMX.Forms,
   SRDiagLog in '..\lib\SRDiagLog.pas',
   SRSettings in '..\lib\SRSettings.pas',
   MainForm in 'ui\MainForm.pas' {frmMain},
   FMX.SRStereoViewport in '..\lib\FMX.SRStereoViewport.pas',
   SRBridge.Api in '..\lib\SRBridge.Api.pas',
+  SRGpuPreference in '..\lib\SRGpuPreference.pas',
+  SRStartProblem in '..\lib\SRStartProblem.pas',
+  SRSettingsDialog in '..\lib\SRSettingsDialog.pas',
   SimulatedReality.Api in '..\lib\SimulatedReality.Api.pas';
 
 {$R *.res}
@@ -64,6 +71,14 @@ begin
       'defined when FastMM5.pas was compiled (a Release build, or a Compile rather than a ' +
       'Build after the project options changed)');
 {$ENDIF}
+  end;
+
+  // Test switch: make FMX draw in software (WARP), so the GPU warning can be
+  // seen on any machine
+  if FindCmdLineSwitch('warp') then
+  begin
+    GlobalUseDXSoftware := True;
+    DiagLog('/warp: FMX will draw in software (GlobalUseDXSoftware), to test the GPU warning');
   end;
 
   Application.Initialize;

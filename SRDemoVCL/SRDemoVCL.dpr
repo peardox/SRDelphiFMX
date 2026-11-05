@@ -31,6 +31,8 @@ uses
   SRSettings in '..\lib\SRSettings.pas',
   SRBridge.Api in '..\lib\SRBridge.Api.pas',
   SRStereoImage in '..\lib\SRStereoImage.pas',
+  SRStartProblem in '..\lib\SRStartProblem.pas',
+  SRSettingsDialog in '..\lib\SRSettingsDialog.pas',
   MainFormVCL in 'ui\MainFormVCL.pas' {frmMainVCL};
 
 {$R *.res}

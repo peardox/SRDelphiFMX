@@ -7,12 +7,13 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
         |  rendered twice per frame, once per tracked eye,
         |  with an off-axis ("window") projection
         v
- TSRStereoRenderer  --CopyToBits-->  side-by-side BGRA buffer
-        |
-        v  srb_SubmitViews()
+ TSRStereoRenderer  --srb_CopyEyeTexture (GPU to GPU, per eye)-->  bridge's view texture
+        |              (fallback: CopyToBits -> CPU buffer -> srb_SubmitViews)
+        v  srb_PresentViews()
  SRBridge.dll (C++, MSVC)
    - child window placed exactly over the viewport (mouse passes through)
-   - its own Direct3D 11 device and swap chain (bitblt model, as Leia's samples; `FlipModel` switches to the flip model)
+   - FMX's own Direct3D 11 device (zero copy), with a pipeline state of its own, or a device of its own
+   - its own swap chain (bitblt model, as Leia's samples)
    - SR::IDX11Weaver1: weave(), then Present()
         |
         v
@@ -26,10 +27,11 @@ This shows an ordinary FMX `TViewport3D` on a LeiaSR (Simulated Reality) eye-tra
 | `SimulatedReality.groupproj` | Project group; open this in the IDE |
 | `SRDemoFMX/` | Test program: `SRDemoFMX.dproj`, `SRDemoFMX.dpr`, and its form in `ui/` |
 | `SRDemoVCL/` | The demo as a VCL program: VCL controls, and a 3D scene drawn by the bridge itself on the GPU (`srb_RenderScene`), with no read-back; its form in `ui/` |
-| `SRFullScreenTest/` | Test program for the full-screen fault: a plain Win32 window (no FMX) weaving a stereo image, with each suspect switchable from the keyboard; its window in `ui/` |
-| `lib/SRStereoImage.pas` | Loads a side-by-side image (or draws a numbered test pattern) and fits it into views of any size; no FMX |
-| `lib/` | Units shared by every project (test and real) |
+| `lib/` | Units shared by every project |
 | `lib/FMX.SRStereoViewport.pas` | `TSRStereoRenderer`, the component |
+| `lib/SRStartProblem.pas` | What went wrong when starting SR, and the ready-made dialog that asks the user what to do; no FMX or VCL |
+| `lib/SRGpuPreference.pas` | Windows' per-program GPU preference (Settings > System > Display > Graphics); no FMX or VCL |
+| `lib/SRStereoImage.pas` | Loads a side-by-side image (or draws a numbered test pattern) and fits it into views of any size, for SRDemoVCL; no FMX |
 | `lib/FMX.SRStereoViewport.Reg.pas` | Registers the component for a design-time package |
 | `lib/SRBridge.Api.pas` | Delphi imports for the bridge DLL |
 | `lib/SimulatedReality.Api.pas` | The SDK's C API (context, display, lens, eye/head/weaver trackers, system events) |
@@ -65,7 +67,7 @@ The SDK zip has no `lib/` folder and no DLLs; the runtime DLLs come with the ins
 
 ```bat
 cd bridge
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DLEIASR_SDKROOT=C:\path\to\simulatedreality-SDK-1.34.5.6862-win64-Release
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DLEIASR_SDKROOT=C:\path\to\LeiaSR-SDK-1.36.2-win64
 cmake --build build --config Release
 ```
 
@@ -88,6 +90,7 @@ begin
   FStereo.Viewport := Viewport3D1;
   FStereo.FocusDistance := 20;    // world units from the camera to the "glass"
   FStereo.OnError := StereoError; // e.g. no SR runtime: the viewport stays 2D
+  FStereo.OnStartProblem := StereoStartProblem; // ask: no glasses-free 3D, try again, or it anyway
   FStereo.OnLog := StereoLog;     // diagnostics, see below
   FStereo.Active := True;         // starts once the form is shown
 end;
@@ -101,23 +104,43 @@ end;
 | Property | Meaning |
 |---|---|
 | `FocusDistance` | The plane this many units in front of the viewport's camera lies on the display glass. Nearer objects come out of the screen and farther ones go behind it. The default, 20, suits FMX's usual camera at Z = -20 looking at the origin. |
-| `EyeSeparationScale` | 1 is physically correct. Less is gentler; more exaggerates depth. |
-| `LoopMode` | `lmIdle`: continuous and paced by the vertical blank; it chains any existing `Application.OnIdle`. `lmTimer`, or `lmManual` where the program calls `RenderFrame`. |
+| `EyeSeparationScale` | 1 is physically correct (the demos always use 1). Less is gentler; more exaggerates depth. |
+| `LoopMode` | `lmIdle`: continuous and paced by the vertical blank; it chains any existing `Application.OnIdle`. OnIdle comes only when the message queue is empty, so a watchdog thread posts a frame message whenever none has started for 25 ms (FMX repainting without a break, as with a heavy scene in a Debug build, would otherwise stop the frames); the log notes it every 5 s while it happens. `lmTimer`, or `lmManual` where the program calls `RenderFrame`. |
 | `VSync`, `LatencyFrames` | Present pacing, and the latency hint for SR's eye prediction. |
 | `LookAround` | On (the default) draws from where the head is, so you can look around objects. Off draws from a fixed viewer in front of the viewport: depth, but no motion with the head. |
 | `EyeSeparationMM` | Use this separation (63 mm, say) instead of the tracker's measured one, keeping the tracked head position; 0 uses the tracked eyes as they are |
 | `LensMode`, `LensSwitchDelay` | `lensOffOverControls` (the default) turns the display's lens off while the pointer is over anything on the SR display other than the viewport (the program's controls, drop-down lists, other programs), so they are sharp; the viewport is drawn flat meanwhile. The pointer must stay on one side for `LensSwitchDelay` ms (250) first, and nothing switches while a mouse button is held. In `FullScreen` the lens stays on. `lensAlwaysOn`, `lensAlwaysOff` force it. |
 | `SettleTime` | Milliseconds (300) the tracked eyes must be found and steady before 3D is shown, at start and after tracking is lost for over a second. Until then the viewport is drawn flat from a fixed viewer, so nothing slides while the tracker searches; the lens is not switched for this. 0 shows 3D at once. |
-| `FullScreen` | Covers the whole SR display with the form, borderless, on the form's existing window in physical pixels. The window is held there from its window procedure, because FMX re-sizes it from rounded logical bounds (at 150% it put it at x = -1, one pixel onto the next monitor, and the weave went wrong). Use this, not the form's own `FullScreen`: FMX re-creates the window for that and, at display scaling above 100%, sizes it in steps, and the weaver SR restarts with wove for the wrong size. Set before the form is shown, it is applied when SR starts. |
+| `FullScreen` | Covers the whole SR display with the form, borderless, on the form's existing window in physical pixels, topmost so the taskbar stays hidden. The window is held there from its window procedure, because FMX re-sizes it from rounded logical bounds (at 150% it put it at x = -1, one pixel onto the next monitor, and the weave went wrong). Use this, not the form's own `FullScreen`: FMX re-creates the window for that and, at display scaling above 100%, sizes it in steps, and the weaver SR restarts with wove for the wrong size. Set before the form is shown, it is applied when SR starts. |
 | `ViewportOnSRDisplay` | Read only. While the viewport's centre is on another monitor, the lens is off and the viewport is drawn flat; each change is logged. |
-| `FlipModel` | Off (the default): the bridge presents with the bitblt swap chain model, like Leia's samples. On: the flip model, which Windows can scan out directly when the window covers the display. Takes effect when SR next starts. |
 | `PlaceFormOnSRDisplay` | On (the default) moves the form onto the SR display at start-up if it opened on another monitor |
+| `ZeroCopy` | On (the default): each eye is copied on the GPU into the bridge's view texture; see "Constraints" below. |
+| `InitTimeout` | Seconds (5) to wait for the SR service and display when starting; the wait is on a background thread. |
 | `LogInterval` | Milliseconds between summary lines on `OnLog` (default 1000; 0 for none). |
+| `SRInstalled`, `StopWhenDegraded`, `AcceptDegraded`, `OnStartProblem`, `StartProblem` | See "Starting glasses-free 3D" below. |
 | `OnLog`, `OnEyesUpdated`, `OnSystemEvent`, `OnError` | Diagnostics, eye positions in mm, SR events (UserFound/Lost, LensOn/Off, ContextInvalid...), failures. |
 
 ### How the projection works
 
 The bridge reports where the viewport sits on the panel, in millimetres, in the same display-centred frame the eye tracker uses. FMX draws with `Model * CameraMatrix * Projection`, where the camera matrix is the view matrix. Its projection is fixed while a frame is drawn, because it is rebuilt only when the context is resized. So each eye's view is the reference camera's view, moved to the eye, followed by a shear and a zoom. The shear turns FMX's symmetric frustum into the asymmetric "window" frustum, and the zoom gives the eye's true field of view. This is Kooima's generalised perspective projection, the same as the SDK's DX11 sample. Every frame checks that the viewport's corner lands on the image's corner, using the GPU's own formula.
+
+## Starting glasses-free 3D
+
+### Computers without SR, and the user's choice
+
+`TSRStereoRenderer.SRInstalled` (or `SRRuntimeInstalled` in `lib/SRBridge.Api.pas`) says, quickly and without the bridge, whether this computer has the LeiaSR runtime (its three DLLs can be found). Where it has not, starting does nothing and raises no event, not even `OnError` (`StartProblem` is `spNotInstalled`, and the log says so): a program can hide everything to do with glasses-free 3D and run as if it had no SR support. Where it has, whether to use it is the user's choice, kept as `useGlassesFree3D` in the settings file (default true): on, the program starts LeiaSR and anything that goes wrong is handled as below; off, LeiaSR is not started until the user turns it on. Both demos work this way: SRDemoFMX's "Glasses-free 3D" box and SRDemoVCL's Weave box are the choice and are saved when the user changes them (a failed start unticks them without changing the saved choice), and both are hidden where LeiaSR is not installed.
+
+### Starting without a freeze
+
+`srb_Initialize` waits on the calling thread for the SR service and display, up to `InitTimeout` (5 s), which would freeze the window. So the waiting is done first, on a background thread: `srb_Probe` in the bridge loads the runtime, tries for an SR context and a ready display until `InitTimeout`, and deletes the context again (about a quarter of a second when all is well). Meanwhile the program runs normally without glasses-free 3D. When the answer comes (posted to the renderer's hidden window), SR is started on the main thread, which is then quick: the service and display are known to be there and the runtime is loaded. So the program may appear flat for a moment and then switch to glasses-free 3D. With the service not running (`spNoService`) or no SR display (`spNoDisplay`) the start-problem dialog comes up when the check gives up. SRDemoVCL does the same.
+
+### When SR cannot start, or would run badly
+
+If SR cannot start (`SRBridge.dll` missing, no SR display, the SR service not running), or it starts but FMX is drawing in software, on a GPU that does not drive the SR display, or not with Direct3D 11, the program carries on without glasses-free 3D: FMX draws the viewport itself, as an ordinary 3D view on a flat screen, at full speed. Only the SR weaving is lost, not the 3D scene. For the GPU cases SR is started, checked and stopped again at once (`StopWhenDegraded`, on by default), because 3D through a software renderer or across two GPUs slows the whole program down, not only the picture. `StartProblem` says what happened (`TSRStartProblem` in `lib/SRStartProblem.pas`).
+
+`OnStartProblem` is then called from the message queue, with SR off, so a dialog shown from it is readable. The handler chooses `scContinueWithoutSR` (the default; also what happens with no handler), `scRetry` (start again, for when the cause has been fixed) or, for the GPU cases only, `scContinueDegraded`, which sets `AcceptDegraded` and starts again with the problem accepted (`OnGpuWarning` is raised then); or `scExit`, which ends the program (`Application.Terminate`) so the SR set-up can be fixed first. `AskStartProblem` in `lib/SRStartProblem.pas` is a ready-made dialog for it, usable from FMX or VCL: a Windows task dialog, modal and centred on the program's window, with a button for each choice and, when the Windows GPU preference would fix it (`CanFixGpu`), a check box to set the high-performance GPU. Exit is always offered. Where task dialogs are not available it falls back to a message box: Abort = exit, Retry, Ignore = without glasses-free 3D; or, when glasses-free 3D anyway is possible, Cancel = without, Try Again, Continue = anyway (a message box has only three buttons, so no Exit there). The wording is about glasses-free 3D, not 3D in general: a 3D scene is still shown, flat, without it.
+
+A stereo image has no single view to fall back on, so it needs one picked: `CopyLeftView` gives the left eye's half of the image set with `ShowStereoImage`. SRDemoFMX shows it over the viewport whenever SR is off (also when Glasses-free 3D is unticked). SRDemoVCL asks only "without glasses-free 3D" or "try again", since its scene is drawn by the bridge. `SRDemoFMX /warp` shows the whole path on any machine; renaming `SRBridge.dll`, or unplugging the SR display, shows the start-failure version.
 
 ## The log
 
@@ -132,7 +155,7 @@ With `OnLog` set (SRDemoFMX shows it under the toolbar, with **Copy log** and **
 
 ## Settings
 
-SRDemoFMX keeps its settings in `%APPDATA%\SRDelphiFMX\settings.json`: the eye separation (63 mm by default), the depth scale, the focus distance, look-around, the weaver's latency, the last image shown and full screen. Every change is saved straight away. A missing setting keeps its default. The **Diagnostics** row has the eye separation (0 = as tracked), **Look-around** and **Latency** (SR's default or 1 to 4 frames).
+Both demos keep their settings in `%APPDATA%\SRDelphiFMX\settings.json`: whether to use glasses-free 3D (`useGlassesFree3D`, on by default), the eye separation (63 mm by default; 0 = as tracked), the focus distance, look-around, the weaver's latency, when the lens is on, the last image shown and full screen. Every change is saved straight away. A missing setting keeps its default. (`eyeSeparationScale` is still in the file for older versions; the demos keep it at 1.) In both demos **Settings...** sets the eye separation, in a small dialog centred on the window, with the lens off while it is open. In SRDemoFMX the second row has **Look-around**, **Latency** (SR's default or 1 to 4 frames), **Lens** and **Show:** (the 3D scene or a side-by-side image from `media/`).
 
 ## Multiple monitors
 
@@ -151,52 +174,28 @@ A Debug build of SRDemoFMX writes these files beside the exe:
 How the pieces help:
 
 - **FastMM5 runs in full debug mode in Debug builds.** The project defines `FastMM_FullDebugModeWhenDLLAvailable`, and the build copies `FastMM_FullDebugMode64.dll` from the submodule next to the exe. The map file is Detailed, so stack traces show units and lines. SRDemoFMX also scans every debug block for corruption every 30 frames, so damage is caught close to when it happens. FastMM5 covers only Delphi's memory, not the bridge's or SR's C++ heaps.
-- **Stage tracing.** The renderer traces its first 5 frames stage by stage (`TraceFrames`), so the last line before a crash shows the stage it died in.
-- **Skip switches.** The **Diagnostics** row in SRDemoFMX skips eye tracking, rendering or weaving, to find which stage is at fault without rebuilding.
-- **Stereo images.** **Show:** in the same row weaves one of the side-by-side images from `media/` (left view in the left half) exactly as given, testing the weaving apart from the 3D rendering. **Fixed 63 mm eye separation** (on by default in SRDemoFMX) uses 63 mm, keeping the tracked head position, instead of the tracker's measured separation. Images are letterboxed or pillarboxed in black to keep their shape.
+- **Stereo images.** **Show:** weaves one of the side-by-side images from `media/` (left view in the left half) exactly as given, testing the weaving apart from the 3D rendering. **A fixed eye separation** (63 mm by default, set with Settings...) is used instead of the tracker's measured one, keeping the tracked head position; 0 uses the tracker's. Images are letterboxed or pillarboxed in black to keep their shape.
 - **When the log simply stops**, with no `FIRST CHANCE`, `UNHANDLED` or `FATAL` line, the program ended in a way no handler sees (a fail-fast). Windows still records it: *Event Viewer > Windows Logs > Application*, as an "Application Error" naming the faulting module, exception code and offset. With `tools/enable_crashdumps.reg` imported, Windows also keeps a full dump in `%LOCALAPPDATA%\CrashDumps`.
 
 ## SRDemoVCL
 
-VCL has no 3D, so SRDemoVCL's scene (a back wall, a floor, a turning cube on the glass, and four spheres from 2.5 to 2 tenths of the window's height behind and in front of it) is drawn by the bridge: `srb_RenderScene` renders both eyes with Direct3D 11 straight into the view texture, with an off-axis projection per eye from the tracked eyes and the window's place on the display, and weaves it. Nothing is read back to the CPU, so it is much faster than SRDemoFMX's FMX route, which renders each eye in FMX, copies it back and uploads it again. The shaders are compiled when the scene is first drawn (`d3dcompiler_47.dll`, part of Windows 10 and 11).
+VCL has no 3D, so SRDemoVCL's scene, the same as SRDemoFMX's (the 11 x 11 grid of spheres, the two columns of cubes and the back wall, in the same world units, so the same size on the display), is drawn by the bridge: `srb_RenderScene` renders both eyes with Direct3D 11 straight into the view texture, with an off-axis projection per eye from the tracked eyes and the window's place on the display, and weaves it. Nothing is read back to the CPU in either demo (SRDemoFMX copies its eyes on the GPU), but the bridge draws the scene in C++ with one shared mesh per shape, while FMX prepares and draws each of its 130 or so objects separately for each eye, so the bridge has more to spare; both reach the display's 60 fps cap on the owner's machine (SRDemoFMX since it stopped drawing the scene a third time, see `SkipViewportPaint`). The shaders are compiled when the scene is first drawn (`d3dcompiler_47.dll`, part of Windows 10 and 11). SRDemoVCL needs a bridge built on 5 November 2026 at 08:40 or later (it has `srb_SceneParamsSize`); with an older one it says the bridge must be rebuilt instead of drawing the old scene.
 
-The toolbar has: Weave (start or stop SR), Show (the 3D scene, the test pattern or a side-by-side image from `media/`), Rotate, Look-around, Depth (the eye separation scaled about the midpoint), Eyes (a fixed separation, or 0 for the tracked one), Views (the viewport's size or half of it) and Lens (off over the controls, always on or always off). F11 is full screen on the SR display, Esc leaves it. The choices are saved with SRDemoFMX's in `%APPDATA%\SRDelphiFMX\settings.json`; `SRDemoVCL.log` and the log panel record what happened, with a summary every 5 seconds.
+The toolbar has: Weave (start or stop SR), Show (the 3D scene, the test pattern or a side-by-side image from `media/`), Rotate, Look-around, Settings... (the eye separation), Views (the viewport's size or half of it) and Lens (off over the controls, always on or always off). F11 is full screen on the SR display, Esc leaves it. The wheel, Page Up, Page Down, Home, a left-button drag and R work as in SRDemoFMX, and the frame rate is drawn on the glass at the top left as digits, so the two demos can be compared side by side. The choices are saved with SRDemoFMX's in `%APPDATA%\SRDelphiFMX\settings.json`; `SRDemoVCL.log` and the log panel record what happened, with a summary every 5 seconds.
 
 New scenes for the VCL route are written in the bridge (or would be loaded from a model file there); SRDemoFMX remains the way to show scenes designed in FMX.
-
-## SRFullScreenTest
-
-A plain Win32 window, no FMX and no 3D, showing a woven stereo image on the SR display. It goes full screen exactly as Leia's DX11 sample does (Raymond Chen's method on the SR display's rectangle), so the full-screen fault can be chased one change at a time. Each choice is a key (the window's title shows them all) and a command-line switch:
-
-| Key | Switch | What |
-|---|---|---|
-| F11, Esc | `/fs` | Full screen on and off (Esc only leaves it) |
-| W | `/window` | Weave into the program's own window, as Leia's samples, instead of the bridge's child window. Restarts the bridge |
-| A | `/adapter=0..2` | Adapter: most dedicated memory (the default, as the 1.36 sample), the default adapter, or the one driving the window's monitor. Restarts the bridge |
-| M | `/flip` | Flip-model swap chain instead of bitblt. Restarts the bridge |
-| V | `/rec` | Views at SR's recommended size (1920 x 1080 here) instead of the window's size |
-| R | `/reapply` | Give the weaver its input view texture every frame, not only when it changes |
-| P | `/parent=0..2` | A second swap chain on the program's window, cleared and presented every frame, standing in for FMX's own on its form: none, bitblt or flip model. Child window only. Restarts the bridge |
-| E | `/eyes` | Ask the weaver for the predicted eye positions, and the window's size in mm, every frame, as SRDemoFMX does |
-| K | `/latency=0..4` | Weaver latency: SR's default, then 1 to 4 frames, as SRDemoFMX's Latency box |
-| F | `/rgba` | Submit RGBA pixels instead of BGRA, as SRDemoFMX does when FMX's surface is RGBA |
-| T | `/mark` | Tell the taskbar the window is full screen (`ITaskbarList2`), as SRDemoFMX does |
-| H | `/hold` | Hold the window at the full-screen rectangle (`WM_WINDOWPOSCHANGING` subclass), as SRDemoFMX does |
-| L | `/lensoff` | Lens on or off |
-| N | `/image=beer.jpg` | Next image: the test pattern, then each image in `media/` |
-| B, G | | Write a "broken now" or "good now" mark in the log, with the seconds since full screen came on |
-
-W, A and R need a bridge built on or after 5 November 2026, and P one built after 03:00 that day; with an older DLL the log says so and they do nothing.
-
-The test pattern has ten numbered bands and the eye's name in each view, and a white square in front of the screen, so a view showing the wrong part of an image is easy to describe ("left eye sees 0-4 stretched"). `SRFullScreenTest.log` has every change, every move of the window, Windows' own idea of whether a full-screen program is running (`SHQueryUserNotificationState`, logged when it changes), which window is in the foreground, SR events, and a summary each second.
 
 ## Constraints of this version
 
 - 2D controls must not overlap the viewport. The woven image is a native child window above the FMX surface. Mouse input passes through to FMX, but FMX controls drawn over that area are hidden.
-- One GPU-to-CPU-to-GPU copy per frame. `CopyToBits` reads each eye back and the bridge uploads it again. A zero-copy path is possible later: render into a DXGI-shared texture on FMX's DX11 device and open it in the bridge.
+- **FMX's own drawing left out (the default, `SkipViewportPaint = True`).** While frames are being drawn and the bridge's window covers the viewport, FMX's own paint of it (a third render of the scene, at every repaint an animation asks for) is never seen, so a `TSRViewport3D` (a `TViewport3D` with `SkipPaint`) leaves it out; it draws again as soon as SR stops or the viewport is hidden. A plain `TViewport3D` still works, drawing the scene a third time. With it SRDemoFMX went from 33 to 60 fps (Release, capped to the display's refresh) on the owner's machine.
+- **Zero copy (the default, `ZeroCopy = True`).** The bridge shares FMX's Direct3D 11 device (`TCustomDX11Context.SharedDevice`). While FMX draws each eye, the renderer hands the bound render target to the bridge (`srb_CopyEyeTexture`), which copies it on the GPU into its view texture (resolving it if multisampled); `srb_PresentViews` then weaves it. Nothing goes through the CPU. The bridge keeps its own pipeline state in a D3D 11.1 state block, swapped in around each call, so FMX and the weaver never disturb each other's bindings. If FMX is not on DX11, the bridge is too old, or a copy fails, the renderer falls back by itself to reading each eye back with `CopyToBits` and uploading it, and the log says why. Stereo images from `media/` always take the upload path.
+- **GPU check.** On laptops with an integrated GPU beside a discrete one, Windows starts programs on the integrated GPU unless told otherwise, and FMX cannot be told which to use. The bridge finds the GPU that drives the SR display before it makes any device: its own device goes there, and FMX's device is shared only if it is on that GPU. After starting, the renderer logs which GPU FMX, the bridge and the SR display are on (`srb_GetGpuCheck`), and if FMX is on the wrong one, or drawing in software, reports it as a start problem (see "When SR cannot start, or would run badly"; `OnGpuWarning` is raised only if SR is kept running with the problem). `SetHighPerformanceGpu` (through `lib/SRGpuPreference.pas`) sets the program's Windows GPU preference, the same setting as Settings > System > Display > Graphics, from the next start; SRDemoFMX offers to do it. `SRDemoFMX /warp` makes FMX draw in software, to see the warning on any machine.
+- **Start-up under the debugger.** Started from the IDE with the debugger (F9), SRDemoFMX took about 20 s to show its first frame on the RTX 5090; started without it, about 2 s. The debugger handles every DLL that loads, and the NVIDIA driver loads many when FMX makes its Direct3D device. Judge start-up times without the debugger (Run Without Debugging, or from Explorer).
+- **Frame cap.** With vsync on, the bridge waits for the SR display's vertical blank after each present (`IDXGIOutput::WaitForVBlank`; the compositor, `DwmFlush`, if the display's output is unknown), so no program draws more frames than the display shows (`srb_SetFrameCap(0)` turns it off).
 - One SR viewport per process.
 - The lens covers the whole panel and switches only as a whole. While it is on, everything outside the woven viewport (other windows, the desktop, the program's own 2D controls) is seen through it unwoven, and looks blurred. That's the hardware, not the program. `LensMode = lensOffOverControls` (the default) turns it off while the pointer is away from the viewport; a full-screen viewport avoids the question.
-- Starting blocks for up to `InitTimeout` seconds (default 5) while it waits for the SR service.
+- Starting SR itself, once the background check has found it ready, takes about a quarter of a second on the main thread (the SR context, the device and the weaver).
 - After an SR context loss (a service restart), the bridge shows the left view in 2D and retries every 3 seconds.
 - Every bridge export masks floating-point exceptions while it runs and catches C++ exceptions, so neither reaches Delphi.
 - In `lmIdle` mode, if other code replaces `Application.OnIdle` after the renderer starts and keeps chaining to it, don't free the renderer before that code unhooks. Otherwise use `lmTimer` or `lmManual`.
@@ -208,6 +207,7 @@ The test pattern has ten numbered bands and the eye's name in each view, and a w
 3. **Parallax:** moving the head left makes near objects slide right against the back wall, as through a window. If an axis goes the wrong way, the log's `cal R U F` signs show what was measured.
 4. Moving or resizing the window, or going full screen (F11), keeps the image locked to the viewport.
 5. Unplugging the USB cable, or stopping the SR service, shows events in the log and a 2D fallback, then recovery.
+6. **How far out of the screen:** across the middle of SRDemoFMX's scene, between two columns of three spinning cubes (one going up, one going down; the outer ones come into view when the scene is tilted), is a grid of 11 x 11 spheres, the same gap across and in depth (3 world units, about 50 mm in a maximised window), centred on the green main sphere on the glass. One colour per depth: white on the glass, five rows behind it (blue, darker further away) and five in front of it towards you (yellow to red, red nearest). The depth gaps and the gaps across look the same, as the eye separation is used as it is (the demos no longer scale it); Settings... sets it (0 = as tracked). The mouse wheel moves the whole scene away (forwards) or towards you (backwards), Shift for quarter steps; Page Up and Page Down do the same. Dragging with the left mouse button over the viewport turns the scene about the green sphere: up and down tilts it about the horizontal axis (as standing up or sitting down would show it), left and right rolls it about the depth axis. Home puts it all back. R starts and stops the grid spinning about the vertical axis through the green sphere. The frame rate is shown at the top left as flat text on the glass (depth 0, so it is equally sharp to both eyes), also in full screen. The status bar gives the depth row's distances from the glass in mm and yours from it, and each move is logged, so the point where a sphere stops fusing, doubles or strains the eyes can be read off and noted. The usual comfort guideline for glasses-free 3D is a pop-out of a fraction of the viewing distance; the grid is there to find this display's real limit.
 
 ## Notes for Claude
 
@@ -215,7 +215,7 @@ These are the working rules for this project, as in GDEM. Read this README, then
 
 ### Delivering work
 
-- Supply whole files, never patches or diffs, in a zip of only the new and changed files, with paths relative to the repository root.
+- Supply whole files, never patches or diffs, in a zip of only the files new or changed since the previous zip, with paths relative to the repository root. Say plainly when a delivery changes `bridge/`, which means the bridge must be rebuilt.
 - Don't mention that changes are uncommitted or unpushed, or being unable to compile.
 - The owner's working copy may be ahead of GitHub; build on the files most recently supplied.
 - Update this README when features or requirements change.

@@ -55,6 +55,8 @@ type
     FFullScreen: Boolean;
     { Backing field for @link(LensMode). }
     FLensMode: Integer;
+    { See @link(TSRSettings.UseGlassesFree3D). }
+    FUseGlassesFree3D: Boolean;
   public
     { Creates settings with default values, which are kept for any setting
       missing from the file when it is loaded. }
@@ -93,7 +95,9 @@ type
       on the display glass. Defaults to @link(DEFAULT_FOCUS_DISTANCE). }
     property FocusDistance: Double read FFocusDistance write FFocusDistance;
 
-    { Depth scale: 1 is physically correct, less is gentler. Defaults to 1. }
+    { Depth scale: 1 is physically correct, less is gentler. Defaults to 1.
+      Kept so older settings files still load; the demos always use and save
+      1 (their Depth slider is gone; SRDemoFMX puts back a saved other value). }
     property EyeSeparationScale: Double read FEyeSeparationScale write FEyeSeparationScale;
 
     { Frames of rendering latency told to the weaver for its eye prediction;
@@ -117,6 +121,12 @@ type
       @code(TSRLensMode) in @code(FMX.SRStereoViewport), kept as a number so
       this unit does not depend on the renderer. }
     property LensMode: Integer read FLensMode write FLensMode;
+
+    { @true (the default) to start LeiaSR (glasses-free 3D) when the program
+      starts, on a computer that has the LeiaSR runtime; @false to leave it
+      off until the user turns it on. Ignored where LeiaSR is not
+      installed: there the program behaves as if it had no SR support. }
+    property UseGlassesFree3D: Boolean read FUseGlassesFree3D write FUseGlassesFree3D;
   end;
 
 implementation
@@ -145,6 +155,7 @@ begin
   FEyeSeparationScale := 1.0;
   FLatencyFrames := 0;
   FLookAround := True;
+  FUseGlassesFree3D := True;
 end;
 
 class function TSRSettings.SettingsFolder: string;

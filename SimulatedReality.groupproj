@@ -6,9 +6,6 @@
         <Projects Include="SRDemoFMX\SRDemoFMX.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="SRFullScreenTest\SRFullScreenTest.dproj">
-            <Dependencies/>
-        </Projects>
         <Projects Include="SRDemoVCL\SRDemoVCL.dproj">
             <Dependencies/>
         </Projects>
@@ -29,15 +26,6 @@
     <Target Name="SRDemoFMX:Make">
         <MSBuild Projects="SRDemoFMX\SRDemoFMX.dproj" Targets="Make"/>
     </Target>
-    <Target Name="SRFullScreenTest">
-        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj"/>
-    </Target>
-    <Target Name="SRFullScreenTest:Clean">
-        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj" Targets="Clean"/>
-    </Target>
-    <Target Name="SRFullScreenTest:Make">
-        <MSBuild Projects="SRFullScreenTest\SRFullScreenTest.dproj" Targets="Make"/>
-    </Target>
     <Target Name="SRDemoVCL">
         <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj"/>
     </Target>
@@ -48,13 +36,13 @@
         <MSBuild Projects="SRDemoVCL\SRDemoVCL.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="SRDemoFMX;SRFullScreenTest;SRDemoVCL"/>
+        <CallTarget Targets="SRDemoFMX;SRDemoVCL"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="SRDemoFMX:Clean;SRFullScreenTest:Clean;SRDemoVCL:Clean"/>
+        <CallTarget Targets="SRDemoFMX:Clean;SRDemoVCL:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="SRDemoFMX:Make;SRFullScreenTest:Make;SRDemoVCL:Make"/>
+        <CallTarget Targets="SRDemoFMX:Make;SRDemoVCL:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

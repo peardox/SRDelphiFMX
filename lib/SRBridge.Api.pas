@@ -126,13 +126,13 @@ type
   PSRBStats = ^TSRBStats;
 
   { What to draw with @link(srb_RenderScene). Matches @code(SRB_SceneParams)
-    in @code(SRBridge.h): 32 bytes. }
+    in @code(SRBridge.h): 64 bytes (32 before 5 November 2026, 08:30). }
   TSRBSceneParams = record
     { Width of each eye's view in pixels. }
     viewWidth: Int32;
     { Height of each eye's view in pixels. }
     viewHeight: Int32;
-    { The cube's turn in radians. }
+    { The cubes' turn about their vertical axis, radians. }
     rotation: Single;
     { Eye separation in millimetres, 0 for the tracked one. }
     eyeSeparationMM: Single;
@@ -143,8 +143,22 @@ type
     lookAround: Int32;
     { 1 draws both eyes from the midpoint: a 2D picture, for the lens off. }
     flat: Int32;
-    { Padding. }
-    reserved: Int32;
+    { The frame rate, drawn on the glass at the top left; below 0 none. }
+    fps: Int32;
+    { The whole scene moved away from the viewer, world units (the viewport
+      is 16.57 units high on the glass, as SRDemoFMX's). }
+    sceneZ: Single;
+    { The scene turned about the horizontal axis through the main sphere,
+      degrees. }
+    tiltDeg: Single;
+    { The scene turned about the depth axis through the main sphere,
+      degrees. }
+    rollDeg: Single;
+    { The sphere grid turned about the vertical axis through the main
+      sphere, degrees. }
+    gridSpinDeg: Single;
+    { Kept zero. }
+    reserved: array[0..3] of Int32;
   end;
   { Pointer to a @link(TSRBSceneParams). }
   PSRBSceneParams = ^TSRBSceneParams;
@@ -173,6 +187,36 @@ type
   end;
   { Pointer to a @link(TSRBSceneInfo). }
   PSRBSceneInfo = ^TSRBSceneInfo;
+
+  { Which GPUs are in use, from @link(srb_GetGpuCheck). Matches
+    @code(SRB_GpuCheck) in @code(SRBridge.h): 416 bytes. }
+  TSRBGpuCheck = record
+    { The program's GPU, UTF-8; empty if no device was given. }
+    programAdapter: array[0..127] of AnsiChar;
+    { The bridge's GPU, UTF-8. }
+    bridgeAdapter: array[0..127] of AnsiChar;
+    { The GPU driving the SR display, UTF-8; empty if not found. }
+    srDisplayAdapter: array[0..127] of AnsiChar;
+    { 1 when the program draws on the SR display's GPU, 0 when it does not
+      (slow, and may misbehave), -1 when unknown. }
+    programOnSRAdapter: Int32;
+    { 1 when the bridge is on the SR display's GPU, 0 when not, -1 unknown. }
+    bridgeOnSRAdapter: Int32;
+    { 1 when the bridge shares the program's device (zero copy). }
+    sharingProgramDevice: Int32;
+    { 1 when the program's device was offered but is not on the SR display's
+      GPU, so it was not shared. }
+    sharedRefused: Int32;
+    { 1 when the program draws in software (WARP, the Basic Render
+      Driver). }
+    programSoftware: Int32;
+    { The SR display's refresh rate in hertz, 0 if unknown. }
+    srRefreshHz: Int32;
+    { Padding. }
+    reserved: array[0..1] of Int32;
+  end;
+  { Pointer to a @link(TSRBGpuCheck). }
+  PSRBGpuCheck = ^TSRBGpuCheck;
 
   { Receives one zero-terminated UTF-8 log line from the bridge, on any
     thread; see @link(srb_SetLogCallback). }
@@ -232,35 +276,61 @@ function srb_SubmitViews(pixels: Pointer; viewWidth, viewHeight, pitch, pixelFor
   @returns(as @link(srb_SubmitViews)) }
 function srb_RenderScene(params: PSRBSceneParams; info: PSRBSceneInfo): Int32; cdecl;
   external SRBridgeDll delayed;
+{ The bridge's @code(sizeof(SRB_SceneParams)): must be
+  @code(SizeOf(TSRBSceneParams)) (64). Not in bridges built before
+  5 November 2026, 08:40, which draw the old scene from 32-byte params:
+  check with @link(SRBridgeHasExport).
+  @returns(the size in bytes) }
+function srb_SceneParamsSize: Int32; cdecl; external SRBridgeDll delayed;
+{ Zero copy: the bridge shares this Direct3D 11 device (FMX's
+  @code(TCustomDX11Context.SharedDevice)) instead of making its own. Call
+  before @link(srb_Initialize); nil goes back to the bridge's own device.
+  Not in bridges built before 5 November 2026, 04:30: check with
+  @link(SRBridgeHasExport).
+  @param(d3d11Device an @code(ID3D11Device), or nil) }
+procedure srb_SetExternalDevice(d3d11Device: Pointer); cdecl; external SRBridgeDll delayed;
+{ Whether SR can start, without a window or a device: loads the runtime,
+  then tries for an SR context and a ready display until timeoutMs has
+  passed, and deletes the context again. Meant for a background thread, so
+  waiting for a starting service or a display does not freeze the program
+  (@link(srb_Initialize) waits on the calling thread); call nothing else in
+  the bridge until it returns. Not in bridges built before 5 November 2026,
+  06:20: check with @link(SRBridgeHasExport).
+  @param(timeoutMs how long to keep trying; 0 tries each once)
+  @returns(@link(SRB_OK), @link(SRB_E_SR_DLL_MISSING),
+    @link(SRB_E_NO_SERVICE) or @link(SRB_E_NO_DISPLAY)) }
+function srb_Probe(timeoutMs: Int32): Int32; cdecl; external SRBridgeDll delayed;
+{ For the GPU check only: the program's own Direct3D 11 device, not shared.
+  Call before @link(srb_Initialize). Not in bridges built before 5 November
+  2026, 05:00: check with @link(SRBridgeHasExport).
+  @param(d3d11Device an @code(ID3D11Device), or nil) }
+procedure srb_SetProgramDevice(d3d11Device: Pointer); cdecl; external SRBridgeDll delayed;
+{ After @link(srb_Initialize): which GPU the program, the bridge and the SR
+  display are on. Not in bridges built before 5 November 2026, 05:00.
+  @param(check receives the answer)
+  @returns(@link(SRB_OK), or @link(SRB_E_NO_DISPLAY) if the SR display's GPU
+    was not found; the other fields are still filled in) }
+function srb_GetGpuCheck(check: PSRBGpuCheck): Int32; cdecl; external SRBridgeDll delayed;
+{ Zero copy: copies one eye's rendered texture (on the shared device;
+  multisampled is resolved) into that eye's half of the view texture, on
+  the GPU.
+  @param(eye 0 left, 1 right)
+  @param(texture an @code(ID3D11Texture2D) or its @code(ID3D11Resource))
+  @param(viewWidth width of each view in pixels)
+  @param(viewHeight height of each view in pixels)
+  @returns(@link(SRB_OK) or a negative error code) }
+function srb_CopyEyeTexture(eye: Int32; texture: Pointer; viewWidth, viewHeight: Int32): Int32;
+  cdecl; external SRBridgeDll delayed;
+{ Zero copy: weaves and presents the views copied with
+  @link(srb_CopyEyeTexture).
+  @returns(as @link(srb_SubmitViews)) }
+function srb_PresentViews(viewWidth, viewHeight: Int32): Int32; cdecl; external SRBridgeDll delayed;
+{ 1 (the default): with vsync on, wait for the SR display's vertical blank
+  after each present (the compositor if its output is unknown), so no more
+  frames are drawn than the display shows. }
+procedure srb_SetFrameCap(enabled: Int32); cdecl; external SRBridgeDll delayed;
 { Turns waiting for the vertical blank on (1) or off (0). }
 procedure srb_SetVSync(enabled: Int32); cdecl; external SRBridgeDll delayed;
-{ Chooses the swap chain model for the next @link(srb_Initialize): 0 (the
-  default) the bitblt model, as Leia's samples use; 1 the flip model. Not in
-  bridges built before 30 October 2026: call it only to choose 1. }
-procedure srb_SetPresentModel(flipModel: Int32); cdecl; external SRBridgeDll delayed;
-{ Chooses the window to weave into for the next @link(srb_Initialize): 0 (the
-  default) the bridge's own child window over the viewport; 1 the parent
-  window itself, as Leia's samples do. Then the swap chain covers the
-  parent's whole client area, @link(srb_SetBounds) only sizes the back
-  buffer, and nothing else may draw into that window (so not an FMX form).
-  Not in bridges built before 5 November 2026: check with
-  @link(SRBridgeHasExport). }
-procedure srb_SetWeaverWindow(onParent: Int32); cdecl; external SRBridgeDll delayed;
-{ Chooses the adapter for the next @link(srb_Initialize): 0 (the default) the
-  one with the most dedicated memory, as Leia's 1.36 sample; 1 the default
-  adapter; 2 the one driving the monitor the parent window is on. Not in
-  bridges built before 5 November 2026: check with @link(SRBridgeHasExport). }
-procedure srb_SetAdapterChoice(choice: Int32); cdecl; external SRBridgeDll delayed;
-{ 1 gives the weaver its input view texture before every weave, not only when
-  the texture changes; a diagnostic, 0 by default. Not in bridges built
-  before 5 November 2026: check with @link(SRBridgeHasExport). }
-procedure srb_SetReapplyInput(everyFrame: Int32); cdecl; external SRBridgeDll delayed;
-{ A diagnostic for the next @link(srb_Initialize): a second swap chain on the
-  parent window, cleared and presented every frame before the weave, as
-  FMX's own swap chain on its form: 0 (the default) none, 1 bitblt model,
-  2 flip model. Only with the child window. Not in bridges built before
-  5 November 2026, 03:00: check with @link(SRBridgeHasExport). }
-procedure srb_SetParentSwapChain(mode: Int32); cdecl; external SRBridgeDll delayed;
 { Tells the weaver how many frames the rendering pipeline takes. }
 procedure srb_SetLatencyInFrames(frames: UInt64); cdecl; external SRBridgeDll delayed;
 { Asks for the lens to be on (1) or off (0). }
@@ -290,9 +360,19 @@ function SRBridgeAvailable: Boolean;
 { Whether the loaded bridge exports a function, for exports added after the
   first release, which an older DLL lacks (calling one would raise an
   exception).
-  @param(Name the export's name, such as @code('srb_SetWeaverWindow'))
+  @param(Name the export's name, such as @code('srb_Probe'))
   @returns(@true if the DLL is loaded and has it) }
 function SRBridgeHasExport(const Name: string): Boolean;
+
+{ Whether the LeiaSR runtime is installed: its three DLLs
+  (@code(SimulatedRealityCore.dll), @code(SimulatedRealityDisplays.dll),
+  @code(SimulatedRealityDirectX.dll)) can be found where the bridge would
+  load them from. Checked without loading them as code and without the
+  bridge, so it is quick and safe on any computer; on one without LeiaSR a
+  program can behave as if it had no SR support at all. It says nothing
+  about whether the SR service is running or a display plugged in.
+  @returns(@true if all three are found) }
+function SRRuntimeInstalled: Boolean;
 
 { The bridge's last error, or why the DLL could not be loaded.
   @returns(a readable message) }
@@ -329,6 +409,26 @@ end;
 function SRBridgeHasExport(const Name: string): Boolean;
 begin
   Result := SRBridgeAvailable and (GetProcAddress(BridgeHandle, PChar(Name)) <> nil);
+end;
+
+function SRRuntimeInstalled: Boolean;
+const
+  RuntimeDlls: array[0..2] of string = ('SimulatedRealityCore.dll', 'SimulatedRealityDisplays.dll',
+    'SimulatedRealityDirectX.dll');
+var
+  Name: string;
+  H: HMODULE;
+begin
+  for Name in RuntimeDlls do
+  begin
+    // The same search as the bridge's LoadLibraryW, but as data: no code
+    // runs and no dependencies are needed
+    H := LoadLibraryEx(PChar(Name), 0, LOAD_LIBRARY_AS_DATAFILE);
+    if H = 0 then
+      Exit(False);
+    FreeLibrary(H);
+  end;
+  Result := True;
 end;
 
 function SRBridgeLastError: string;

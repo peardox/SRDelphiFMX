@@ -5,7 +5,7 @@
   else WIC reads), or drawn as a numbered test pattern. Each half is scaled
   with GDI's halftone filter to fit its view, keeping its shape, with black
   bars. No FMX: used by programs that have no FMX canvas, such as
-  SRFullScreenTest. Windows only, as is the SR runtime. }
+  SRDemoVCL. Windows only, as is the SR runtime. }
 unit SRStereoImage;
 
 interface
