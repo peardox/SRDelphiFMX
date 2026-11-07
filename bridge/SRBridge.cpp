@@ -1788,6 +1788,16 @@ SRB_API void srb_SetExternalDevice(void* d3d11Device)
     BLog("external device %p %s", d3d11Device, d ? "given: the bridge will share it" : "cleared: the bridge makes its own");
 }
 
+// The bridge's Direct3D 11 device (its own, or the program's when shared),
+// for a program that renders elsewhere (OpenGL, through WGL_NV_DX_interop2)
+// and makes its eye textures on this device for srb_CopyEyeTexture. Not
+// AddRef'd: valid until srb_Finalize. Asked for by peardox/StereoModel
+// (Gorilla3D draws with OpenGL), 7 November 2026.
+SRB_API void* srb_GetDevice(void)
+{
+    return g.initialized ? static_cast<void*>(g.dev) : nullptr;
+}
+
 // The view texture's pixel format family for a texture format, or -1.
 int FormatFamily(DXGI_FORMAT f)
 {

@@ -639,6 +639,17 @@ type
       @param(Info receives them)
       @returns(@true while running) }
     function DisplayInfo(out Info: TSRBDisplayInfo): Boolean;
+    { Logs everything that sets what the viewer sees, as one block marked
+      SNAPSHOT, for comparing a view that looks good with another program
+      (StereoModel logs the same quantities): the display; the viewport on
+      it in mm and pixels; the eyes, their separation and whether tracked;
+      the settings; the reference camera; for each eye the field of view,
+      zoom, shear and corner check; the world-to-millimetre scale and what
+      it makes of the eyes' and the glass's distances; the frame rate since
+      the last periodic line; and the bridge's counters.
+      @param(Note a line from the program to head the block (the scene's
+        state, say); empty for none) }
+    procedure LogSnapshot(const Note: string);
     { Copies the left eye's half of the stereo image being shown, for
       showing it in 2D while SR is off.
       @param(Dest receives it, resized to the half image)
@@ -1909,6 +1920,78 @@ begin
       FViewport.Repaint;
   end;
   FActive := False;
+end;
+
+procedure TSRStereoRenderer.LogSnapshot(const Note: string);
+var
+  Info: TSRBDisplayInfo;
+  Stats: TSRBStats;
+  Secs, FovRef: Double;
+  MidZ: Single;
+
+  { Logs one eye's calibration.
+    @param(Name the eye)
+    @param(Cal its calibration)
+    @param(EyeMM the eye, mm) }
+  procedure LogEye(const Name: string; const Cal: TSREyeCalibration; const EyeMM: TPoint3D);
+  begin
+    Log(Format('  %s eye %s mm: zoom %.4f (field of view %.2f deg), shear (%.4f, %.4f), ' +
+      'corner (%.4f, %.4f), axis signs R%s U%s F%s', [Name, FmtPt(EyeMM), Cal.Zoom,
+      RadToDeg(2 * ArcTan(Cal.TanRef / Max(Cal.Zoom, 1e-6))), Cal.ShearX, Cal.ShearY,
+      Cal.CornerNdc.X, Cal.CornerNdc.Y, FmtSign(Cal.SgnR), FmtSign(Cal.SgnU),
+      FmtSign(Cal.SgnF)]));
+  end;
+
+begin
+  Log('=== SNAPSHOT ===');
+  if Note <> '' then
+    Log('  ' + Note);
+  if not FRunning then
+  begin
+    Log('  LeiaSR is not running');
+    Log('=== END SNAPSHOT ===');
+    Exit;
+  end;
+  if DisplayInfo(Info) then
+    Log(Format('  display %d x %d px, %.1f x %.1f mm, recommended view %d x %d per eye, ' +
+      'platform %s', [Info.resolutionWidth, Info.resolutionHeight, Info.physicalWidthMM,
+      Info.physicalHeightMM, Info.recommendedViewWidth, Info.recommendedViewHeight,
+      UTF8ToString(srb_GetPlatformVersion)]));
+  Log(Format('  viewport on the display: centre (%.1f, %.1f) mm, %.1f x %.1f mm, view %d x %d ' +
+    'px per eye', [FWinCenterMM.X, FWinCenterMM.Y, FWinSizeMM.Width, FWinSizeMM.Height,
+    FViewSize.cx, FViewSize.cy]));
+  Log(Format('  eyes L%s R%s mm, separation %.1f mm%s%s, look-around %s, lens %s',
+    [FmtPt(FLeftEyeMM), FmtPt(FRightEyeMM), FLeftEyeMM.Distance(FRightEyeMM),
+     StrIf(FUsingNominalEyes, ' NOMINAL (not tracked)', ''),
+     StrIf(FIpdRepaired, ' (rebuilt)', ''), BoolToStr(FLookAround, True),
+     StrIf(FLensOn, 'on', 'off')]));
+  Log(Format('  settings: FocusDistance %.3f, EyeSeparationMM %.1f (0 = tracked), ' +
+    'EyeSeparationScale %.2f, LatencyFrames %d, VSync %s, LensMode %d', [FFocusDistance,
+    FEyeSeparationMM, FEyeSeparationScale, FLatencyFrames, BoolToStr(FVSync, True),
+    Ord(FLensMode)]));
+  FovRef := RadToDeg(2 * ArcTan(FCalLeft.TanRef));
+  Log(Format('  reference camera at %s, vertical field of view %.2f deg (tan half %.4f)',
+    [FmtPt(FRefCameraPos), FovRef, FCalLeft.TanRef]));
+  if FCalLeft.Scale > 0 then
+  begin
+    MidZ := (FLeftEyeMM.Z + FRightEyeMM.Z) / 2;
+    Log(Format('  scale %.6f world units per mm (%.3f mm per unit): the glass is %.3f units ' +
+      'from the reference camera (%.0f mm), the eyes %.0f mm = %.3f units from the glass, ' +
+      'their separation %.3f units', [FCalLeft.Scale, 1 / FCalLeft.Scale, FFocusDistance,
+      FFocusDistance / FCalLeft.Scale, MidZ, MidZ * FCalLeft.Scale,
+      FLeftEyeMM.Distance(FRightEyeMM) * FCalLeft.Scale]));
+  end;
+  LogEye('left', FCalLeft, FLeftEyeMM);
+  LogEye('right', FCalRight, FRightEyeMM);
+  Secs := (FClock.ElapsedMilliseconds - FLastLogMs) / 1000;
+  if Secs > 0 then
+    Log(Format('  %.1f fps (worst %.0f ms) over the last %.1f s', [FFramesSinceLog / Secs,
+      FWorstFrameMs, Secs]));
+  if srb_GetStats(@Stats) = SRB_OK then
+    Log(Format('  bridge: woven %d of %d, weaver latency %d us, back buffer %d x %d',
+      [Int64(Stats.framesWoven), Int64(Stats.framesSubmitted), Int64(Stats.weaverLatencyUs),
+       Stats.backBufferWidth, Stats.backBufferHeight]));
+  Log('=== END SNAPSHOT ===');
 end;
 
 function TSRStereoRenderer.DisplayInfo(out Info: TSRBDisplayInfo): Boolean;

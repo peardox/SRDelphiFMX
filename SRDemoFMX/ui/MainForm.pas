@@ -314,12 +314,16 @@ type
       @param(Key the virtual key code)
       @param(IsRepeat @true for auto-repeat)
       @returns(@true if the key was one the demo uses (F11, Esc in full
-        screen, Page Up, Page Down, Home, R) and must not reach any
+        screen, Page Up, Page Down, Home, R, P) and must not reach any
         control) }
     function HookKey(Key: Word; IsRepeat: Boolean): Boolean;
     { Starts or stops the grid's spin about the vertical axis (R), keeping
       the angle it has reached. }
     procedure ToggleGridSpin;
+    { Logs a snapshot (P): the scene's state (move, tilt, roll, the grid's
+      spin, the depth row in mm) and the renderer's
+      @link(TSRStereoRenderer.LogSnapshot). }
+    procedure Snapshot;
   end;
 
 var
@@ -847,6 +851,20 @@ var
   Leave: Boolean;
   Delta: Single;
 begin
+  // P logs a snapshot of everything that sets the view, for comparing
+  // with StereoModel (owner, 7 November 2026)
+  if Key = vkP then
+  begin
+    Result := True;
+    if not IsRepeat then
+      TThread.ForceQueue(nil,
+        procedure
+        begin
+          if KeyHookForm <> nil then
+            KeyHookForm.Snapshot;
+        end);
+    Exit;
+  end;
   // R starts or stops the grid's spin
   if Key = vkR then
   begin
@@ -890,6 +908,13 @@ begin
       if KeyHookForm <> nil then
         KeyHookForm.FullScreenKey(Leave);
     end);
+end;
+
+procedure TfrmMain.Snapshot;
+begin
+  FStereo.LogSnapshot(Format('SRDemoFMX scene: Z %.2f, tilt %.1f, roll %.1f deg, grid spin ' +
+    '%.1f deg (%s); %s', [FSceneZ, FSceneTilt, FSceneRoll, FGridRoot.RotationAngle.Y,
+    IfThenStr(FGridSpin.Pause, 'stopped', 'spinning'), DepthText]));
 end;
 
 procedure TfrmMain.ToggleGridSpin;

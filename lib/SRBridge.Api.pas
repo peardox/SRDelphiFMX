@@ -341,6 +341,13 @@ procedure srb_SetLens(enabled: Int32); cdecl; external SRBridgeDll delayed;
   @returns(1 on, 0 off, -1 not known: not initialised, or a runtime without
     isLensEnabled) }
 function srb_GetLensState: Int32; cdecl; external SRBridgeDll delayed;
+{ The bridge's Direct3D 11 device (its own, or the program's when shared),
+  for a program that makes its eye textures on it for
+  @link(srb_CopyEyeTexture): an OpenGL program, through WGL_NV_DX_interop2.
+  Not AddRef'd: valid until @link(srb_Finalize). Not in bridges built before
+  7 November 2026, 21:00: check with @link(SRBridgeHasExport).
+  @returns(an @code(ID3D11Device), or nil while not initialised) }
+function srb_GetDevice: Pointer; cdecl; external SRBridgeDll delayed;
 { Takes the oldest queued system event.
   @returns(1 if one was written to @code(ev), 0 if none) }
 function srb_PollSystemEvent(ev: PSRBSystemEvent): Int32; cdecl; external SRBridgeDll delayed;

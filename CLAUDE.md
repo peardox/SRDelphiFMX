@@ -2,6 +2,14 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
+## Bridge device for StereoModel (7 November 2026, 21:00)
+
+Asked by the owner from peardox/StereoModel: zero copy for Gorilla3D, which draws with OpenGL. New export `srb_GetDevice` (`bridge/SRBridge.cpp`, `SRBridge.h`, `lib/SRBridge.Api.pas`): the bridge's `ID3D11Device` (`g.dev`), not AddRef'd, nil until initialised. StereoModel makes its two eye textures on it, registers them with OpenGL (WGL_NV_DX_interop2), blits Gorilla3D's framebuffer into them, then calls the existing `srb_CopyEyeTexture` (which accepts any texture on `g.dev`) and `srb_PresentViews`. Nothing else changed. THE BRIDGE MUST BE REBUILT. Not yet built.
+
+## Snapshot for StereoModel (7 November 2026, 18:30)
+
+Owner: SRDemoFMX's view is excellent; log its settings while it looks right, to compare with StereoModel's. `TSRStereoRenderer.LogSnapshot(Note)` (public, in `lib/FMX.SRStereoViewport.pas`) logs one SNAPSHOT block (display, viewport mm and px, eyes, settings, reference camera, scale and what it makes of the eyes' and glass's distances, each eye's zoom / field of view / shear / corner, fps since the last periodic line, bridge counters); SRDemoFMX's key P (`TfrmMain.Snapshot`, through its keyboard hook, no repeats) calls it with the scene's state and `DepthText`. Nothing else changed; no bridge change.
+
 ## Bridge change for StereoModel (7 November 2026, 17:00)
 
 Asked by the owner from peardox/StereoModel (its PeardoxLeiaSR package uses this bridge). `bridge/SRBridge.cpp`: the context is made through `NewContext()`, which calls `newSRContextLensPreference(g.lensOn)` when the runtime exports it (looked up, optional; else `newSRContext` as before), for both `srb_Initialize` and `srb_Probe`, so the lens starts as last asked with `srb_SetLens` (StereoModel asks for off: its panel was blurred through the whole start); and a new export `srb_GetLensState` (SR's `isLensEnabled` on the bridge's lens hint, optional: 1 on, 0 off, -1 not known). `bridge/SRBridge.h` and `lib/SRBridge.Api.pas` declare it. Nothing else changed; the demos ask for the lens on (`g.lensOn` defaults to true), so they behave as before. THE BRIDGE MUST BE REBUILT. Not yet built.

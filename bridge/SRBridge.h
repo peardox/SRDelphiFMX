@@ -220,6 +220,13 @@ SRB_API void    srb_SetLens(int32_t enabled);   /* lens on/off hint; before srb_
    built before 7 November 2026, 17:00. */
 SRB_API int32_t srb_GetLensState(void);
 
+/* The bridge's ID3D11Device (its own, or the program's when shared), for a
+   program that makes its eye textures on it for srb_CopyEyeTexture (an
+   OpenGL program through WGL_NV_DX_interop2). Not AddRef'd: valid until
+   srb_Finalize; NULL while not initialised. Not in bridges built before
+   7 November 2026, 21:00. */
+SRB_API void*   srb_GetDevice(void);
+
 /* Pops one queued system event. Returns 1 if an event was written, 0 if none. */
 SRB_API int32_t srb_PollSystemEvent(SRB_SystemEvent* ev);
 
