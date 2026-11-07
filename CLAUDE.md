@@ -2,6 +2,10 @@
 
 This shows FMX `TViewport3D` scenes on a LeiaSR eye-tracked lenticular display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
+## Bridge change for StereoModel (7 November 2026, 17:00)
+
+Asked by the owner from peardox/StereoModel (its PeardoxLeiaSR package uses this bridge). `bridge/SRBridge.cpp`: the context is made through `NewContext()`, which calls `newSRContextLensPreference(g.lensOn)` when the runtime exports it (looked up, optional; else `newSRContext` as before), for both `srb_Initialize` and `srb_Probe`, so the lens starts as last asked with `srb_SetLens` (StereoModel asks for off: its panel was blurred through the whole start); and a new export `srb_GetLensState` (SR's `isLensEnabled` on the bridge's lens hint, optional: 1 on, 0 off, -1 not known). `bridge/SRBridge.h` and `lib/SRBridge.Api.pas` declare it. Nothing else changed; the demos ask for the lens on (`g.lensOn` defaults to true), so they behave as before. THE BRIDGE MUST BE REBUILT. Not yet built.
+
 ## Session handover (5 November 2026, 17:23)
 
 **Where this session ended.** GitHub's head is `e6ca440` ("Working SBS player", 13:12). That push has the sound step, and the README describes film sound as working. The "Step 3, sound" note below still says it was not built or tested; the owner hasn't confirmed either way in this session, so ask before relying on it. This session worked from `e6ca440` and changed no Pascal, `.dproj` or `bridge/` file, so nothing needs rebuilding.

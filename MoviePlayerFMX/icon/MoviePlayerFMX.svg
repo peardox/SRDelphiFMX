@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3142"/><stop offset="1" stop-color="#141822"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff6a3d"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3fe0d0"/><stop offset="1" stop-color="#2a8cff"/>
+    </linearGradient>
+    <clipPath id="frame"><rect x="30" y="62" width="196" height="132" rx="10"/></clipPath>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#tile)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="47.5" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+  <!-- film perforations, top and bottom -->
+  <g fill="#ffffff" fill-opacity="0.22">
+    <rect x="36" y="36" width="16" height="12" rx="3"/><rect x="64" y="36" width="16" height="12" rx="3"/>
+    <rect x="92" y="36" width="16" height="12" rx="3"/><rect x="120" y="36" width="16" height="12" rx="3"/>
+    <rect x="148" y="36" width="16" height="12" rx="3"/><rect x="176" y="36" width="16" height="12" rx="3"/>
+    <rect x="204" y="36" width="16" height="12" rx="3"/>
+    <rect x="36" y="208" width="16" height="12" rx="3"/><rect x="64" y="208" width="16" height="12" rx="3"/>
+    <rect x="92" y="208" width="16" height="12" rx="3"/><rect x="120" y="208" width="16" height="12" rx="3"/>
+    <rect x="148" y="208" width="16" height="12" rx="3"/><rect x="176" y="208" width="16" height="12" rx="3"/>
+    <rect x="204" y="208" width="16" height="12" rx="3"/>
+  </g>
+  <!-- the side-by-side frame: left eye warm, right eye cool -->
+  <g clip-path="url(#frame)">
+    <rect x="30" y="62" width="98" height="132" fill="url(#left)"/>
+    <rect x="128" y="62" width="98" height="132" fill="url(#right)"/>
+    <!-- lenticular stripes, faint -->
+    <g fill="#000000" fill-opacity="0.08">
+      <rect x="38" y="62" width="4" height="132"/><rect x="50" y="62" width="4" height="132"/>
+      <rect x="62" y="62" width="4" height="132"/><rect x="74" y="62" width="4" height="132"/>
+      <rect x="86" y="62" width="4" height="132"/><rect x="98" y="62" width="4" height="132"/>
+      <rect x="110" y="62" width="4" height="132"/><rect x="140" y="62" width="4" height="132"/>
+      <rect x="152" y="62" width="4" height="132"/><rect x="164" y="62" width="4" height="132"/>
+      <rect x="176" y="62" width="4" height="132"/><rect x="188" y="62" width="4" height="132"/>
+      <rect x="200" y="62" width="4" height="132"/><rect x="212" y="62" width="4" height="132"/>
+    </g>
+  </g>
+  <line x1="128" y1="62" x2="128" y2="194" stroke="#141822" stroke-width="4"/>
+  <!-- play button across the join -->
+  <circle cx="128" cy="128" r="44" fill="#141822" fill-opacity="0.88"/>
+  <circle cx="128" cy="128" r="44" fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-width="5"/>
+  <path d="M114 104 L152 128 L114 152 Z" fill="#ffffff" stroke="#ffffff" stroke-width="6" stroke-linejoin="round"/>
+</svg>

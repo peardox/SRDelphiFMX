@@ -213,7 +213,12 @@ SRB_API int32_t srb_PresentViews(int32_t viewWidth, int32_t viewHeight);
 SRB_API void    srb_SetFrameCap(int32_t enabled);
 SRB_API void    srb_SetVSync(int32_t enabled);
 SRB_API void    srb_SetLatencyInFrames(uint64_t frames);
-SRB_API void    srb_SetLens(int32_t enabled);   /* lens on/off hint */
+SRB_API void    srb_SetLens(int32_t enabled);   /* lens on/off hint; before srb_Initialize it also
+                                                   sets the lens the SR context starts with */
+/* The lens as it actually is (SR's isLensEnabled): 1 on, 0 off, -1 not known
+   (not initialised, or a runtime without isLensEnabled). Not in bridges
+   built before 7 November 2026, 17:00. */
+SRB_API int32_t srb_GetLensState(void);
 
 /* Pops one queued system event. Returns 1 if an event was written, 0 if none. */
 SRB_API int32_t srb_PollSystemEvent(SRB_SystemEvent* ev);

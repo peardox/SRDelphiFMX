@@ -5,7 +5,9 @@
   far; Space pauses) or a single frame, half side-by-side as films are
   encoded, or full, and @link(TSRMovieRenderer) weaves it at its proper shape
   as a stereo pair. The viewport has no scene of its own: it is black until
-  something is opened. The
+  something is opened. LeiaSR is not started with the program, so the window
+  comes up at once with the display's lens off: it starts when the first
+  film or frame is opened, and turns the lens on then. The
   controls and the log sit outside the viewport, because the woven image
   covers it with a native window that hides FMX controls drawn over it. }
 unit PlayerForm;
@@ -23,7 +25,8 @@ type
   { The player's main window. }
   TfrmPlayer = class(TForm)
     { Builds the viewport, controls and renderer, and opens the frame file
-      named on the command line, if any. }
+      named on the command line, if any. LeiaSR is not started here: see
+      @link(StartStereoIfWanted). }
     procedure FormCreate(Sender: TObject);
     { Shuts SR down while the native window still exists.
       @param(Sender the form)
@@ -155,6 +158,11 @@ type
       @param(LeftMM left eye, millimetres)
       @param(RightMM right eye, millimetres) }
     procedure StereoEyes(Sender: TObject; const LeftMM, RightMM: TPoint3D);
+    { Starts LeiaSR when glasses-free 3D is wanted, installed and not yet
+      started, and there is something to show (a film or a frame). The
+      program starts with LeiaSR off, so the window is up at once and the
+      lens stays off until the first film or frame is opened. }
+    procedure StartStereoIfWanted;
     { Shows the frame's left view in 2D while LeiaSR is off, and hides it
       otherwise. }
     procedure UpdateFlatImage;
@@ -498,8 +506,12 @@ begin
   end
   else if FSettings.UseGlassesFree3D then
   begin
+    // Not started yet: the window comes up at once, with the lens off, and
+    // LeiaSR starts when a film or frame is opened (StartStereoIfWanted)
     SetToggleQuietly(True);
-    FStereo.Active := True;   // completes once the form is shown
+    AddLog('Glasses-free 3D on: LeiaSR is not started until a film or frame is opened ' +
+      '(the lens stays off until then)');
+    FStatus.Text := FrameText;
   end
   else
   begin
@@ -693,6 +705,8 @@ begin
       FStereo.PlayFile(FileName, TSRStereoLayout(FLayout.ItemIndex));
     FFileName := FileName;
     Caption := AppName + ' - ' + ExtractFileName(FileName);
+    // The first thing opened starts LeiaSR, which turns the lens on
+    StartStereoIfWanted;
     // Open... starts here next time, also after a restart
     if (FSettings <> nil) and not SameText(FSettings.PlayerFolder, ExtractFileDir(FileName)) then
     begin
@@ -751,8 +765,12 @@ begin
   end;
   if FToggle.IsChecked then
   begin
-    FStatus.Text := 'Starting LeiaSR...';
-    FStereo.Active := True;
+    StartStereoIfWanted;
+    if not FStereo.Active then
+    begin
+      AddLog('Glasses-free 3D on: LeiaSR starts when a film or frame is opened');
+      FStatus.Text := FrameText;
+    end;
   end
   else
   begin
@@ -892,6 +910,17 @@ begin
   finally
     FToggle.OnChange := ToggleChange;
   end;
+end;
+
+procedure TfrmPlayer.StartStereoIfWanted;
+begin
+  if not FSRInstalled or not FToggle.IsChecked or FStereo.Active then
+    Exit;
+  if not FStereo.Frame.Loaded and (FStereo.Video = nil) then
+    Exit;
+  AddLog('Something to show: starting LeiaSR (the lens comes on once it runs)');
+  FStatus.Text := 'Starting LeiaSR...';
+  FStereo.Active := True;   // the background check first, as at any start
 end;
 
 procedure TfrmPlayer.UpdateFlatImage;

@@ -49,6 +49,8 @@ namespace {
 // SR C API function pointers (resolved at runtime)
 // ---------------------------------------------------------------------------
 typedef void* (*PFN_newSRContext)();
+typedef void* (*PFN_newSRContextLensPreference)(bool);
+typedef bool  (*PFN_isLensEnabled)(void*);
 typedef void  (*PFN_initializeSRContext)(void*);
 typedef void  (*PFN_deleteSRContext)(void*);
 typedef void* (*PFN_createSystemSense)(void*);
@@ -66,6 +68,10 @@ struct SRApi {
     HMODULE core = nullptr, displays = nullptr, directx = nullptr, version = nullptr;
 
     PFN_newSRContext               newSRContext = nullptr;
+    // Optional (looked up, not required): the context made with the lens
+    // already as asked, and the lens's actual state
+    PFN_newSRContextLensPreference newSRContextLensPreference = nullptr;
+    PFN_isLensEnabled              isLensEnabled = nullptr;
     PFN_initializeSRContext        initializeSRContext = nullptr;
     PFN_deleteSRContext            deleteSRContext = nullptr;
     PFN_createSystemSense          createSystemSense = nullptr;
@@ -331,6 +337,11 @@ bool LoadSRApi()
     LOADFN(displays, lensEnableHint);
     LOADFN(displays, lensDisableHint);
 #undef LOADFN
+    // Optional: without them the context starts with SR's own lens
+    // preference, and srb_GetLensState answers -1
+    a.newSRContextLensPreference = reinterpret_cast<PFN_newSRContextLensPreference>(
+        GetProcAddress(a.core, "newSRContextLensPreference"));
+    a.isLensEnabled = reinterpret_cast<PFN_isLensEnabled>(GetProcAddress(a.displays, "isLensEnabled"));
 
     if (a.version)
         a.getSRPlatformVersion = reinterpret_cast<PFN_getSRPlatformVersion>(GetProcAddress(a.version, "getSRPlatformVersion"));
@@ -386,6 +397,18 @@ void TearDownSR()
     }
 }
 
+// A new SR context, made with the lens as last asked (srb_SetLens) when the
+// runtime can, so the lens is not switched on by SR's default preference
+// while the bridge starts (the panel stayed blurred through StereoModel's
+// whole start, though it had asked for the lens off). Throws as
+// newSRContext does while the service starts.
+void* NewContext()
+{
+    if (g.api.newSRContextLensPreference)
+        return g.api.newSRContextLensPreference(g.lensOn);
+    return g.api.newSRContext();
+}
+
 void FindSRDisplayRect();   // below, with the display search
 void LogSRDisplayAdapter();  // below, with the adapter choice
 int  CreateSRWeaver();
@@ -398,9 +421,10 @@ int CreateSRContext(double timeoutSeconds)
     auto timedOut = [&]() { return (GetTickCount64() - start) > static_cast<ULONGLONG>(timeoutSeconds * 1000.0); };
 
     // 1. Context (throws SR::ServerNotAvailableException while the SR service starts up)
-    BLog("creating SR context (timeout %.1f s)", timeoutSeconds);
+    BLog("creating SR context (timeout %.1f s, lens %s%s)", timeoutSeconds, g.lensOn ? "on" : "off",
+         g.api.newSRContextLensPreference ? "" : "; this runtime has no newSRContextLensPreference, so SR's own preference applies until the hint");
     while (!g.srContext) {
-        try { g.srContext = g.api.newSRContext(); } catch (...) { g.srContext = nullptr; }
+        try { g.srContext = NewContext(); } catch (...) { g.srContext = nullptr; }
         if (g.srContext || timedOut()) break;
         Sleep(100);
     }
@@ -1537,7 +1561,7 @@ SRB_API int32_t srb_Probe(int32_t timeoutMs)
     // The context throws while the service is starting: keep trying
     void* ctx = nullptr;
     for (;;) {
-        try { ctx = g.api.newSRContext(); } catch (...) { ctx = nullptr; }
+        try { ctx = NewContext(); } catch (...) { ctx = nullptr; }
         if (ctx || GetTickCount64() - start > limit) break;
         Sleep(100);
     }
@@ -1879,6 +1903,13 @@ SRB_API void srb_SetLens(int32_t enabled)
     if (g.lensHint) {
         try { if (g.lensOn) g.api.lensEnableHint(g.lensHint); else g.api.lensDisableHint(g.lensHint); } catch (...) {}
     }
+}
+
+SRB_API int32_t srb_GetLensState(void)
+{
+    SRB_ENTRY;
+    if (!g.lensHint || !g.api.isLensEnabled) return -1;
+    try { return g.api.isLensEnabled(g.lensHint) ? 1 : 0; } catch (...) { return -1; }
 }
 
 SRB_API int32_t srb_PollSystemEvent(SRB_SystemEvent* ev)

@@ -335,6 +335,12 @@ procedure srb_SetVSync(enabled: Int32); cdecl; external SRBridgeDll delayed;
 procedure srb_SetLatencyInFrames(frames: UInt64); cdecl; external SRBridgeDll delayed;
 { Asks for the lens to be on (1) or off (0). }
 procedure srb_SetLens(enabled: Int32); cdecl; external SRBridgeDll delayed;
+{ The lens as it actually is (SR's isLensEnabled), not as asked. Not in
+  bridges built before 7 November 2026, 17:00: check with
+  @link(SRBridgeHasExport).
+  @returns(1 on, 0 off, -1 not known: not initialised, or a runtime without
+    isLensEnabled) }
+function srb_GetLensState: Int32; cdecl; external SRBridgeDll delayed;
 { Takes the oldest queued system event.
   @returns(1 if one was written to @code(ev), 0 if none) }
 function srb_PollSystemEvent(ev: PSRBSystemEvent): Int32; cdecl; external SRBridgeDll delayed;
