@@ -13,7 +13,9 @@ It reads every .pas file in each folder and the folders inside it (lib and
 ui), and each program's .dpr. Names declared in any of them count for
 @link, so a program's comments can link to the units in common. It
 reports, per unit:
-  - a missing @abstract unit comment before `unit X;`
+  - a missing @abstract unit comment before `unit X;`: a { } block (the
+    demos' and the bridge unit's style) or a run of //** lines (the
+    Spritely, Lenticular.Display and StereoModel units' style)
   - interface declarations with no comment immediately before them
   - unbalanced parentheses inside @tag(...) in comments
   - @link(...) targets that are not declared anywhere in the project
@@ -78,10 +80,20 @@ for f in files:
     text = texts[f]
     lines = text.split('\n')
     # unit comment
-    m = re.search(r'^(unit|program)\s+\w+;', text, re.M)
+    m = re.search(r'^(unit|program)\s+[\w.]+;', text, re.M)
     if m:
         before = text[:m.start()].rstrip()
-        if not before.endswith('}') or '@abstract' not in before:
+        # Either style: a { } block (this repository's) or a run of //** lines
+        # (the Spritely and Lenticular.Display units' and StereoModel's)
+        star_lines = []
+        for line in reversed(before.split('\n')):
+            if line.lstrip().startswith('//**'):
+                star_lines.append(line)
+            else:
+                break
+        star_ok = bool(star_lines) and '@abstract' in '\n'.join(star_lines)
+        brace_ok = before.endswith('}') and '@abstract' in before
+        if not (star_ok or brace_ok):
             problems.append(f'{label(f)}: unit/program comment without @abstract')
     # comments: tag balance and links
     for cm in re.finditer(r'\{(?!\$)(.*?)\}', text, re.S):

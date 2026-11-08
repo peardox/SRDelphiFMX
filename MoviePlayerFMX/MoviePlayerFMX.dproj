@@ -1258,7 +1258,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg's 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg&apos;s 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
@@ -1266,7 +1266,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg's 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg&apos;s 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>

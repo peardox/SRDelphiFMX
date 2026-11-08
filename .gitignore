@@ -104,3 +104,7 @@ media/**/*.webm
 docs/html/
 docs/chm/
 /pasdoc.log
+
+# Run logs of StereoModel and ProjectionTest, and FastMM5's leak reports
+*.log
+*_MemoryManager_EventLog.txt

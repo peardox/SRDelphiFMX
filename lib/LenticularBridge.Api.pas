@@ -4,9 +4,13 @@
   The weaver is C++ only, so @code(bridge/LenticularBridge.cpp) wraps it behind
   a flat C API; this unit declares that API for Delphi. See
   @code(bridge/LenticularBridge.h) for the C side. The display runtime is 64-bit only.
-  This unit still compiles for Win32 so a design-time package can load in the
-  32-bit IDE; there the imports are never called and @link(LenticularBridgeAvailable)
-  returns @false.
+  This unit compiles on every platform, so the Lenticular package (which
+  holds it) and the programs using it stay cross-platform: the records and
+  constants are declared everywhere, the imports only on Windows. Elsewhere,
+  and on Win32 (where the imports exist so the 32-bit IDE can load the
+  design package, but are never called), @link(LenticularBridgeAvailable)
+  and @link(LenticularRuntimeInstalled) return @false and nothing else may
+  be called.
 
   All imports are delayed, so a program using this unit starts on machines
   without the DLL; call @link(LenticularBridgeAvailable) before anything else. }
@@ -50,6 +54,11 @@ const
   LNB_FMT_BGRA8 = 0;
   { Pixel format: red, green, blue, alpha bytes. }
   LNB_FMT_RGBA8 = 1;
+
+  { @link(TLNBSystemEvent).eventType when the display's lens has come on. }
+  LNB_EVENT_LENS_ON = 14;
+  { @link(TLNBSystemEvent).eventType when the display's lens has gone off. }
+  LNB_EVENT_LENS_OFF = 15;
 
 type
   { Physical properties of the 3D display. }
@@ -228,6 +237,9 @@ type
   { Three singles: an eye position in millimetres. }
   TLNBVec3 = array[0..2] of Single;
 
+{$IFDEF MSWINDOWS}
+// The imports: Windows only (the display runtime is Windows 64-bit only)
+
 { Creates the runtime context, a child window of @code(parentWnd), a Direct3D 11
   device and the weaver, waiting up to @code(timeoutSeconds) for the display
   service.
@@ -379,6 +391,8 @@ function lnb_GetPlatformVersion: PAnsiChar; cdecl; external LenticularBridgeDll 
   @link(lnb_Initialize). }
 procedure lnb_SetDllDirectory(path: PWideChar); cdecl; external LenticularBridgeDll delayed;
 
+{$ENDIF}
+
 { Loads LenticularBridge.dll from the executable's folder or the search path.
   @returns(@true if it could be loaded; always @false in a 32-bit build) }
 function LenticularBridgeAvailable: Boolean;
@@ -413,13 +427,18 @@ function LenticularEventTypeName(AEventType: UInt64): string;
 implementation
 
 uses
-  Winapi.Windows, System.SysUtils;
+  {$IFDEF MSWINDOWS}
+  Winapi.Windows,
+  {$ENDIF}
+  System.SysUtils;
 
+{$IFDEF MSWINDOWS}
 var
   { Module handle of the loaded bridge, 0 until loaded. }
   BridgeHandle: HMODULE = 0;
   { Windows error code from the failed load, 0 if none. }
   BridgeLoadError: DWORD = 0;
+{$ENDIF}
 
 function LenticularBridgeAvailable: Boolean;
 begin
@@ -440,7 +459,11 @@ end;
 
 function LenticularBridgeHasExport(const Name: string): Boolean;
 begin
+{$IFDEF MSWINDOWS}
   Result := LenticularBridgeAvailable and (GetProcAddress(BridgeHandle, PChar(Name)) <> nil);
+{$ELSE}
+  Result := False;
+{$ENDIF}
 end;
 
 function LenticularRuntimeInstalled: Boolean;
@@ -474,7 +497,7 @@ end;
 
 function LenticularBridgeLastError: string;
 begin
-{$IFDEF WIN64}
+{$IF DEFINED(WIN64)}
   if LenticularBridgeAvailable then
     Exit(UTF8ToString(lnb_GetLastError));
   case BridgeLoadError of
@@ -488,8 +511,10 @@ begin
     Result := Format('%s could not be loaded: %s (error %d)',
       [LenticularBridgeDll, SysErrorMessage(BridgeLoadError), BridgeLoadError]);
   end;
-{$ELSE}
+{$ELSEIF DEFINED(MSWINDOWS)}
   Result := 'This is a 32-bit build. Glasses-free 3D needs the Windows 64-bit target platform.';
+{$ELSE}
+  Result := 'Glasses-free 3D is available on Windows (64-bit) only.';
 {$ENDIF}
 end;
 

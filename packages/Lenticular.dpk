@@ -1,0 +1,19 @@
+package Lenticular;
+
+{ Lenticular glasses-free 3D components for FireMonkey - runtime. Written by tools/gen_packages.py - edit the script, not this file. }
+
+{$DESCRIPTION 'Lenticular glasses-free 3D components for FireMonkey - runtime'}
+{$RUNONLY}
+{$IMPLICITBUILD ON}
+
+requires
+  rtl,
+  fmx;
+
+contains
+  Lenticular.Storage in '..\lib\Lenticular.Storage.pas',
+  Lenticular.Display.Settings in '..\lib\Lenticular.Display.Settings.pas',
+  LenticularBridge.Api in '..\lib\LenticularBridge.Api.pas',
+  Lenticular.Display in '..\lib\Lenticular.Display.pas';
+
+end.

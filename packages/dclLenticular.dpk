@@ -1,0 +1,18 @@
+package dclLenticular;
+
+{ Lenticular glasses-free 3D components for FireMonkey - design time. Written by tools/gen_packages.py - edit the script, not this file. }
+
+{$DESCRIPTION 'Lenticular glasses-free 3D components for FireMonkey - design time'}
+{$DESIGNONLY}
+{$IMPLICITBUILD ON}
+
+requires
+  rtl,
+  fmx,
+  designide,
+  Lenticular;
+
+contains
+  Lenticular.Reg in '..\lib\Lenticular.Reg.pas';
+
+end.

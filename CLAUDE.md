@@ -1,7 +1,36 @@
 # Lenticular (SRDelphiFMX): handover notes
 
-This shows FMX `TViewport3D` scenes on an eye-tracked lenticular (glasses-free 3D) display from Delphi. Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
+This shows FMX `TViewport3D` scenes on an eye-tracked lenticular (glasses-free 3D) display from Delphi, and holds the Spritely and Lenticular component sets with StereoModel (see "Areas and rules"). Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
+
+## Areas and rules (owner, 8 November 2026)
+
+StereoModel (peardox/StereoModel, which stays where it is but is no longer worked on) is merged in. Its handover, with its full history, is `StereoModel/CLAUDE.md`; read its rule sections before working on any of its files. The rules go by area:
+
+| Area | Files | Rules |
+|---|---|---|
+| The Spritely and Lenticular sets | `lib/Spritely.*`, `lib/Lenticular.Display*.pas`, `lib/Lenticular.Storage.pas`, `lib/Lenticular.Reg.pas`, `lib/icons/`, `lib/*.Reg.dcr`, `packages/`, `tools/gen_packages.py`, `gen_icons.py`, `gen_icon_res.py` | StereoModel's (`StereoModel/CLAUDE.md`, "Rules"): cross-platform, `//**` PasDoc, two-space indent, prefixes `TSpritely...` / `TLenticular...`, the two sets never use each other, the PACKAGE REBUILD line in capitals with every delivery |
+| StereoModel and ProjectionTest | `StereoModel/`, `ProjectionTest/`, `models/`, `tools/gen_demo_scene.py`, `gen_dolly_hallway.py` | StereoModel's; their own types keep the owner's prefix `TPeardox...` |
+| The bridge unit | `lib/LenticularBridge.Api.pas` | This repository's (`{ }` PasDoc), but it is now IN THE LENTICULAR PACKAGE too: it must compile on every platform (imports under `{$IFDEF MSWINDOWS}`), and a change to it needs the Lenticular package rebuilt |
+| The demos, their library and the bridge | `LenticularDemoFMX/`, `LenticularDemoVCL/`, `MoviePlayerFMX/`, the other `lib/Lenticular.*` units, `bridge/`, `dll/` | This repository's (README, "Notes for Claude", and this file): Windows 64-bit, `{ }` PasDoc |
+
+Common to all: whole files in a zip of only the files changed since the previous zip, paths from the root; say plainly when `bridge/` changed (rebuild the bridge) and when a package's unit changed (the rebuild line); no trademarks outside README's notice; ASCII sources; `python3 tools/pasdoc_check.py` prints "No problems found" (it now takes either comment style); never change a submodule (FastMM5) from here.
+
+`gen_packages.py` lists the demos' 12 library units as `SOURCE_ONLY` (compiled from source by the demos, in no package). A design package for `Lenticular.StereoViewport.Reg` would need its own runtime package that requires Lenticular, since `LenticularBridge.Api` can be in only one package the IDE loads.
+
+## StereoModel merged in (8 November 2026, zip LenticularMerge1)
+
+Follows the `refactor` branch at 9619d82 (LenticularRename1 and the rebuilt bridge). StereoModel's `refactor` branch (Rename1, b70f09d) copied in, laid out as this repository's programs:
+
+- `src/StereoModel.*` -> `StereoModel/`, `src/ProjectionTest.*` -> `ProjectionTest/`, each with its `ui/` and `common/` (their own units only: `StereoModelGLProbe` and `ProjectionTestAccess` were already gone). `StereoModel/README.md` (the components, packages and programs, paths updated), `StereoModel/CLAUDE.md` (its handover, a note on the move at the top) and `StereoModel/LICENSE` (MIT) came too.
+- Its `lib/` units, icons and `.dcr` files into the root `lib/`; `packages/`, `models/`, the five `tools/gen_*.py` at the root. Its `tools/pasdoc.bat`, `pasdoc-*.css` and `StereoGroup.groupproj` were not copied: this repository's are used.
+- ONE BRIDGE UNIT: StereoModel's `Lenticular.Display.Api` is not carried over; `lib/LenticularBridge.Api.pas` is used by the Lenticular package and the demos. It was made cross-platform for that, and gained `LNB_EVENT_LENS_ON` / `_OFF` (14 / 15), which `Lenticular.Display` uses. `Lenticular.Display`, StereoModel's units, the package and `gen_packages.py` name it.
+- StereoModel's post-build copies `..\dll\LenticularBridge.dll` (it copied from the SRDelphiFMX submodule before); there is no SRDelphiFMX submodule any more.
+- `Lenticular.groupproj`: Spritely, dclSpritely, Lenticular, dclLenticular, LenticularDemoFMX, LenticularDemoVCL, MoviePlayerFMX, StereoModel (depends on Spritely and Lenticular), ProjectionTest (depends on Spritely), built in that order.
+- `tools/pasdoc.bat`: a `spritely` reference of its own (Spritely needs Gorilla3D), every `*.Reg` unit out of the api run; StereoModel and ProjectionTest are found as programs. `tools/pasdoc_check.py`: accepts a `//**` @abstract header too, and dotted unit names.
+- Comments that named SRDelphiFMX or SRDemoFMX now say LenticularDemoFMX or the stereo renderer (`Lenticular.StereoViewport`); `Spritely.Projection` names neither (Spritely knows nothing of Lenticular).
+- README: the new folders and units, "Spritely, Lenticular and StereoModel", the reference table; the VCL demo's settings file corrected to `%APPDATA%\Peardox\LenticularDemos.json`. CREDITS: Gorilla3D, the test models (sources of `uvcube.glb` and `Mage.glb` to be recorded), StereoModel's MIT licence. `.gitignore`: `*.log`, `*_MemoryManager_EventLog.txt`.
+- No bridge change. PACKAGE REBUILD: all four packages, from here (their units are now in this repository's `lib/`), and the design packages installed from here; StereoModel's copies in the Dcp folders are replaced.
 
 ## Rename for Lenticular (8 November 2026, zip LenticularRename1)
 
