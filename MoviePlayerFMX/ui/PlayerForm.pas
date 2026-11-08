@@ -1,11 +1,11 @@
 { @abstract(Main window of MoviePlayerFMX: a side-by-side film or frame
-  shown on the LeiaSR display, with a log.)
+  shown on a lenticular 3D display, with a log.)
 
   Open... (or Ctrl+O) loads a side-by-side film (FFmpeg, pictures only so
   far; Space pauses) or a single frame, half side-by-side as films are
-  encoded, or full, and @link(TSRMovieRenderer) weaves it at its proper shape
+  encoded, or full, and @link(TLenticularMovieRenderer) weaves it at its proper shape
   as a stereo pair. The viewport has no scene of its own: it is black until
-  something is opened. LeiaSR is not started with the program, so the window
+  something is opened. The display is not started with the program, so the window
   comes up at once with the display's lens off: it starts when the first
   film or frame is opened, and turns the lens on then. The
   controls and the log sit outside the viewport, because the woven image
@@ -19,16 +19,16 @@ uses
   FMX.Types, FMX.Controls, FMX.Forms, FMX.Graphics, FMX.StdCtrls, FMX.Layouts,
   FMX.Memo, FMX.Memo.Types, FMX.ScrollBox, FMX.Types3D, FMX.Controls3D,
   FMX.Viewport3D, FMX.Platform, FMX.Controls.Presentation, FMX.ListBox, FMX.Objects,
-  SRSettings, SRStartProblem, SRStereoFrame, FMX.SRStereoViewport, FMX.SRMovieRenderer;
+  Lenticular.Settings, Lenticular.StartProblem, Lenticular.StereoFrame, Lenticular.StereoViewport, Lenticular.MovieRenderer;
 
 type
   { The player's main window. }
   TfrmPlayer = class(TForm)
     { Builds the viewport, controls and renderer, and opens the frame file
-      named on the command line, if any. LeiaSR is not started here: see
+      named on the command line, if any. The display is not started here: see
       @link(StartStereoIfWanted). }
     procedure FormCreate(Sender: TObject);
-    { Shuts SR down while the native window still exists.
+    { Shuts the display down while the native window still exists.
       @param(Sender the form)
       @param(Action what to do with the form) }
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
@@ -40,12 +40,12 @@ type
     { The viewport's camera, which the renderer needs to draw from. }
     FCamera: TCamera;
     { Black backing for @link(FFlatImage), over the viewport; shown only
-      while LeiaSR is off and a frame is open. }
+      while the display is off and a frame is open. }
     FFlatBack: TRectangle;
-    { The frame's left view, shown in 2D while LeiaSR is off. }
+    { The frame's left view, shown in 2D while the display is off. }
     FFlatImage: TImage;
-    { Shows the frame on the SR display. }
-    FStereo: TSRMovieRenderer;
+    { Shows the frame on the 3D display. }
+    FStereo: TLenticularMovieRenderer;
     { The frame file open now, empty for none. }
     FFileName: string;
     { The repository's media folder (found above the executable), empty if
@@ -56,10 +56,10 @@ type
     { Turns glasses-free 3D on and off. }
     FToggle: TCheckBox;
     { How the frame is packed: auto, half side-by-side or full side-by-side
-      (in @link(TSRStereoLayout) order). }
+      (in @link(TLenticularStereoLayout) order). }
     FLayout: TComboBox;
     { When the display's lens is on: off over the controls, always on, or
-      always off (in @link(TSRLensMode) order). }
+      always off (in @link(TLenticularLensMode) order). }
     FLens: TComboBox;
     { Full screen on and off. }
     FFullScreen: TCheckBox;
@@ -70,19 +70,19 @@ type
     { Frames drawn, for the periodic FastMM5 scan. }
     FFrames: Integer;
     { Saved settings, shared with the demos. }
-    FSettings: TSRSettings;
+    FSettings: TLenticularSettings;
     { Set while settings are being applied, so the controls' handlers do not
       save them back half-applied. }
     FLoading: Boolean;
-    { Controls that only mean anything with LeiaSR, hidden where it is not
+    { Controls that only mean anything with the display, hidden where it is not
       installed. }
-    FSROnly: TArray<TControl>;
-    { Whether this computer has the LeiaSR runtime. }
-    FSRInstalled: Boolean;
-    { Adds a control to @link(FSROnly).
+    FGlassesFreeOnly: TArray<TControl>;
+    { Whether this computer has the display runtime. }
+    FRuntimeInstalled: Boolean;
+    { Adds a control to @link(FGlassesFreeOnly).
       @param(C the control)
       @returns(C) }
-    function SROnly(C: TControl): TControl;
+    function GlassesFreeOnly(C: TControl): TControl;
     { Builds the viewport and the 2D image over it. }
     procedure BuildView;
     { Builds the toolbar and the log. }
@@ -134,7 +134,7 @@ type
       @param(Sender the renderer)
       @param(Msg the error) }
     procedure StereoError(Sender: TObject; const Msg: string);
-    { LeiaSR could not start, or was turned off because it would run very
+    { The display could not start, or was turned off because it would run very
       badly: asks the user (continue without glasses-free 3D, try again, use
       glasses-free 3D anyway, or exit), and offers the high-performance GPU
       when that would fix it.
@@ -144,9 +144,9 @@ type
       @param(CanDegrade whether glasses-free 3D anyway can be offered)
       @param(CanFixGpu whether the Windows GPU preference should fix it)
       @param(Choice receives the user's choice) }
-    procedure StereoStartProblem(Sender: TObject; Problem: TSRStartProblem; const Msg: string;
-      CanDegrade, CanFixGpu: Boolean; var Choice: TSRStartChoice);
-    { LeiaSR is running: hides the 2D image and ticks glasses-free 3D.
+    procedure StereoStartProblem(Sender: TObject; Problem: TLenticularStartProblem; const Msg: string;
+      CanDegrade, CanFixGpu: Boolean; var Choice: TLenticularStartChoice);
+    { The display is running: hides the 2D image and ticks glasses-free 3D.
       @param(Sender the renderer) }
     procedure StereoStarted(Sender: TObject);
     { Adds a renderer log line.
@@ -158,12 +158,12 @@ type
       @param(LeftMM left eye, millimetres)
       @param(RightMM right eye, millimetres) }
     procedure StereoEyes(Sender: TObject; const LeftMM, RightMM: TPoint3D);
-    { Starts LeiaSR when glasses-free 3D is wanted, installed and not yet
+    { Starts the display when glasses-free 3D is wanted, installed and not yet
       started, and there is something to show (a film or a frame). The
-      program starts with LeiaSR off, so the window is up at once and the
+      program starts with the display off, so the window is up at once and the
       lens stays off until the first film or frame is opened. }
     procedure StartStereoIfWanted;
-    { Shows the frame's left view in 2D while LeiaSR is off, and hides it
+    { Shows the frame's left view in 2D while the display is off, and hides it
       otherwise. }
     procedure UpdateFlatImage;
     { Sets the glasses-free 3D tick box without starting or stopping
@@ -203,7 +203,7 @@ implementation
 {$R *.fmx}
 
 uses
-  System.Math, FMX.Dialogs, FMX.Platform.Win, FastMM5, SRDiagLog, SRSettingsDialog;
+  System.Math, FMX.Dialogs, FMX.Platform.Win, FastMM5, Lenticular.DiagLog, Lenticular.SettingsDialog;
 
 { The few Windows calls the keyboard hook needs, declared here rather than
   using Winapi.Windows, whose names (Rectangle, TBitmap and others) would
@@ -320,8 +320,8 @@ begin
   FViewArea.Parent := Self;
   FViewArea.Align := TAlignLayout.Client;
 
-  // TSRViewport3D: leaves out FMX's own drawing while glasses-free 3D covers it
-  FViewport := TSRViewport3D.Create(Self);
+  // TLenticularViewport3D: leaves out FMX's own drawing while glasses-free 3D covers it
+  FViewport := TLenticularViewport3D.Create(Self);
   FViewport.Parent := FViewArea;
   FViewport.Align := TAlignLayout.Client;
   FViewport.Color := TAlphaColors.Black;
@@ -334,7 +334,7 @@ begin
   FCamera.Position.Point := Point3D(0, 0, -20);
   FViewport.Camera := FCamera;
 
-  // The frame's left view, for 2D while LeiaSR is off (the woven image only
+  // The frame's left view, for 2D while the display is off (the woven image only
   // exists while it runs). Over the viewport, so made last.
   FFlatBack := TRectangle.Create(Self);
   FFlatBack.Parent := FViewArea;
@@ -357,7 +357,7 @@ var
   Btn: TButton;
 begin
   // One area at the bottom: the toolbar, then the log; only the area is
-  // hidden in full screen, so the order never changes (as in SRDemoFMX)
+  // hidden in full screen, so the order never changes (as in LenticularDemoFMX)
   FBottomArea := TLayout.Create(Self);
   FBottomArea.Parent := Self;
   FBottomArea.Align := TAlignLayout.Bottom;
@@ -378,7 +378,7 @@ begin
 
   FToggle := TCheckBox.Create(Self);
   FToggle.Parent := Bar;
-  SROnly(FToggle);
+  GlassesFreeOnly(FToggle);
   FToggle.Align := TAlignLayout.Left;
   FToggle.Width := 130;
   FToggle.Text := 'Glasses-free 3D';
@@ -416,11 +416,11 @@ begin
   Lbl.Width := 40;
   Lbl.Margins.Left := 12;
   Lbl.Text := 'Lens';
-  SROnly(Lbl);
+  GlassesFreeOnly(Lbl);
 
   FLens := TComboBox.Create(Self);
   FLens.Parent := Bar;
-  SROnly(FLens);
+  GlassesFreeOnly(FLens);
   FLens.Align := TAlignLayout.Left;
   FLens.Width := 160;
   FLens.Items.Add('Off over controls');
@@ -439,7 +439,7 @@ begin
 
   Btn := TButton.Create(Self);
   Btn.Parent := Bar;
-  SROnly(Btn);
+  GlassesFreeOnly(Btn);
   Btn.Align := TAlignLayout.Left;
   Btn.Width := 90;
   Btn.Margins.Left := 8;
@@ -478,7 +478,7 @@ begin
   BuildControls;
   BuildView;
 
-  FStereo := TSRMovieRenderer.Create(Self);
+  FStereo := TLenticularMovieRenderer.Create(Self);
   FStereo.Viewport := FViewport;
   FStereo.FocusDistance := 20;
   FStereo.OnError := StereoError;
@@ -495,28 +495,28 @@ begin
   FindMedia;
   LoadSettings;
   InstallKeyHook;
-  FSRInstalled := TSRStereoRenderer.SRInstalled;
-  if not FSRInstalled then
+  FRuntimeInstalled := TLenticularStereoRenderer.RuntimeInstalled;
+  if not FRuntimeInstalled then
   begin
-    // As if the program had no SR support: no controls, no messages
-    AddLog('LeiaSR runtime not installed: glasses-free 3D controls hidden, LeiaSR not started');
-    for C in FSROnly do
+    // As if the program had no glasses-free 3D support: no controls, no messages
+    AddLog('display runtime not installed: glasses-free 3D controls hidden, the display not started');
+    for C in FGlassesFreeOnly do
       C.Visible := False;
     FStatus.Text := FrameText;
   end
   else if FSettings.UseGlassesFree3D then
   begin
     // Not started yet: the window comes up at once, with the lens off, and
-    // LeiaSR starts when a film or frame is opened (StartStereoIfWanted)
+    // The display starts when a film or frame is opened (StartStereoIfWanted)
     SetToggleQuietly(True);
-    AddLog('Glasses-free 3D on: LeiaSR is not started until a film or frame is opened ' +
+    AddLog('Glasses-free 3D on: the display is not started until a film or frame is opened ' +
       '(the lens stays off until then)');
     FStatus.Text := FrameText;
   end
   else
   begin
     SetToggleQuietly(False);
-    AddLog('Glasses-free 3D is off in the settings (useGlassesFree3D false): LeiaSR not started');
+    AddLog('Glasses-free 3D is off in the settings (useGlassesFree3D false): the display not started');
     FStatus.Text := 'Glasses-free 3D off (tick Glasses-free 3D to use it)';
   end;
   // A frame file on the command line is opened at once
@@ -533,9 +533,9 @@ begin
   UpdateFlatImage;
 end;
 
-function TfrmPlayer.SROnly(C: TControl): TControl;
+function TfrmPlayer.GlassesFreeOnly(C: TControl): TControl;
 begin
-  FSROnly := FSROnly + [C];
+  FGlassesFreeOnly := FGlassesFreeOnly + [C];
   Result := C;
 end;
 
@@ -700,12 +700,12 @@ begin
   try
     // A still through WIC; anything else is taken for a film (FFmpeg)
     if IsFrameFile(FileName) then
-      FStereo.ShowFrameFile(FileName, TSRStereoLayout(FLayout.ItemIndex))
+      FStereo.ShowFrameFile(FileName, TLenticularStereoLayout(FLayout.ItemIndex))
     else
-      FStereo.PlayFile(FileName, TSRStereoLayout(FLayout.ItemIndex));
+      FStereo.PlayFile(FileName, TLenticularStereoLayout(FLayout.ItemIndex));
     FFileName := FileName;
     Caption := AppName + ' - ' + ExtractFileName(FileName);
-    // The first thing opened starts LeiaSR, which turns the lens on
+    // The first thing opened starts the display, which turns the lens on
     StartStereoIfWanted;
     // Open... starts here next time, also after a restart
     if (FSettings <> nil) and not SameText(FSettings.PlayerFolder, ExtractFileDir(FileName)) then
@@ -731,7 +731,7 @@ begin
   // A film takes it from its next picture; a still's layout is decided when
   // it is loaded, so it is loaded again
   if FStereo.Video <> nil then
-    FStereo.VideoLayout := TSRStereoLayout(FLayout.ItemIndex)
+    FStereo.VideoLayout := TLenticularStereoLayout(FLayout.ItemIndex)
   else if FFileName <> '' then
     ShowFile(FFileName);
 end;
@@ -747,11 +747,11 @@ begin
     Result := Format('%s  %s / %s%s, %s', [ExtractFileName(FFileName),
       FormatSeconds(FStereo.Video.Position), FormatSeconds(Len),
       IfThenStr(FStereo.Video.Paused, ' (paused: Space)', ''),
-      TSRStereoFrame.LayoutName(FStereo.Frame.Layout)])
+      TLenticularStereoFrame.LayoutName(FStereo.Frame.Layout)])
   else if not FStereo.Frame.Loaded then
     Result := 'Nothing open (Open... or Ctrl+O)'
   else
-    Result := FStereo.Frame.Name + ', ' + TSRStereoFrame.LayoutName(FStereo.Frame.Layout);
+    Result := FStereo.Frame.Name + ', ' + TLenticularStereoFrame.LayoutName(FStereo.Frame.Layout);
 end;
 
 procedure TfrmPlayer.ToggleChange(Sender: TObject);
@@ -768,21 +768,21 @@ begin
     StartStereoIfWanted;
     if not FStereo.Active then
     begin
-      AddLog('Glasses-free 3D on: LeiaSR starts when a film or frame is opened');
+      AddLog('Glasses-free 3D on: the display starts when a film or frame is opened');
       FStatus.Text := FrameText;
     end;
   end
   else
   begin
     FStereo.Active := False;
-    FStatus.Text := 'Glasses-free 3D off (LeiaSR stopped)';
+    FStatus.Text := 'Glasses-free 3D off (display stopped)';
   end;
   UpdateFlatImage;
 end;
 
 procedure TfrmPlayer.LensChange(Sender: TObject);
 begin
-  FStereo.LensMode := TSRLensMode(FLens.ItemIndex);
+  FStereo.LensMode := TLenticularLensMode(FLens.ItemIndex);
   if FSettings <> nil then
     FSettings.LensMode := FLens.ItemIndex;
   AddLog('Lens: ' + FLens.Items[FLens.ItemIndex]);
@@ -792,7 +792,7 @@ end;
 procedure TfrmPlayer.FullScreenChange(Sender: TObject);
 begin
   // Full screen shows only the view; F11 or Esc brings the rest back. The
-  // renderer's full screen, not the form's (see SRDemoFMX)
+  // renderer's full screen, not the form's (see LenticularDemoFMX)
   FBottomArea.Visible := not FFullScreen.IsChecked;
   FStereo.FullScreen := FFullScreen.IsChecked;
   // Not saved: the settings file is shared with the demos, and starting in
@@ -825,12 +825,12 @@ end;
 
 procedure TfrmPlayer.LoadSettings;
 begin
-  FSettings := TSRSettings.Create;
+  FSettings := TLenticularSettings.Create;
   try
     if FSettings.Load then
-      AddLog('Settings read from ' + TSRSettings.SettingsFileName)
+      AddLog('Settings read from ' + TLenticularSettings.SettingsFileName)
     else
-      AddLog('No settings file yet; defaults used (' + TSRSettings.SettingsFileName + ')');
+      AddLog('No settings file yet; defaults used (' + TLenticularSettings.SettingsFileName + ')');
   except
     on E: Exception do
       AddLog(E.Message + '; defaults used');
@@ -845,14 +845,14 @@ begin
     FStereo.LookAround := FSettings.LookAround;
     FStereo.LatencyFrames := FSettings.LatencyFrames;
     FLens.ItemIndex := EnsureRange(FSettings.LensMode, 0, FLens.Items.Count - 1);
-    FStereo.LensMode := TSRLensMode(FLens.ItemIndex);
-    // fullScreen is SRDemoFMX's: the player always starts in a window, so
+    FStereo.LensMode := TLenticularLensMode(FLens.ItemIndex);
+    // fullScreen is LenticularDemoFMX's: the player always starts in a window, so
     // Open... is on screen (F11 for full screen)
   finally
     FLoading := False;
   end;
   AddLog(Format('Settings: glasses-free 3D %s, eye separation %.0f mm, latency %d, lens %s; ' +
-    'starting in a window (the saved fullScreen %s is SRDemoFMX''s, not used here)',
+    'starting in a window (the saved fullScreen %s is LenticularDemoFMX''s, not used here)',
     [BoolToStr(FSettings.UseGlassesFree3D, True), FSettings.EyeSeparationMM,
     FSettings.LatencyFrames, FLens.Items[FLens.ItemIndex], BoolToStr(FSettings.FullScreen, True)]));
 end;
@@ -893,7 +893,7 @@ end;
 
 procedure TfrmPlayer.StereoError(Sender: TObject; const Msg: string);
 begin
-  FStatus.Text := 'LeiaSR error: ' + Msg;
+  FStatus.Text := 'Display error: ' + Msg;
   TThread.ForceQueue(nil,
     procedure
     begin
@@ -914,12 +914,12 @@ end;
 
 procedure TfrmPlayer.StartStereoIfWanted;
 begin
-  if not FSRInstalled or not FToggle.IsChecked or FStereo.Active then
+  if not FRuntimeInstalled or not FToggle.IsChecked or FStereo.Active then
     Exit;
   if not FStereo.Frame.Loaded and (FStereo.Video = nil) then
     Exit;
-  AddLog('Something to show: starting LeiaSR (the lens comes on once it runs)');
-  FStatus.Text := 'Starting LeiaSR...';
+  AddLog('Something to show: starting the display (the lens comes on once it runs)');
+  FStatus.Text := 'Starting the display...';
   FStereo.Active := True;   // the background check first, as at any start
 end;
 
@@ -931,7 +931,7 @@ begin
   if Show then
     Show := FStereo.CopyFrameLeftView(FFlatImage.Bitmap);
   if Show <> FFlatBack.Visible then
-    AddLog(IfThenStr(Show, Format('Showing the frame''s left view in 2D (LeiaSR off), %d x %d',
+    AddLog(IfThenStr(Show, Format('Showing the frame''s left view in 2D (the display off), %d x %d',
       [FFlatImage.Bitmap.Width, FFlatImage.Bitmap.Height]), 'No 2D image over the viewport'));
   FFlatBack.Visible := Show;
 end;
@@ -942,17 +942,17 @@ begin
   UpdateFlatImage;
 end;
 
-procedure TfrmPlayer.StereoStartProblem(Sender: TObject; Problem: TSRStartProblem;
-  const Msg: string; CanDegrade, CanFixGpu: Boolean; var Choice: TSRStartChoice);
+procedure TfrmPlayer.StereoStartProblem(Sender: TObject; Problem: TLenticularStartProblem;
+  const Msg: string; CanDegrade, CanFixGpu: Boolean; var Choice: TLenticularStartChoice);
 const
-  ChoiceNames: array[TSRStartChoice] of string = ('continue without glasses-free 3D',
+  ChoiceNames: array[TLenticularStartChoice] of string = ('continue without glasses-free 3D',
     'try again', 'use glasses-free 3D anyway', 'exit');
 var
   Owner: NativeUInt;
   FixWanted: Boolean;
   FixText: string;
 begin
-  // Called from the message queue with LeiaSR off, so the dialog is readable
+  // Called from the message queue with the display off, so the dialog is readable
   FStatus.Text := 'Glasses-free 3D off: ' + StartProblemName(Problem);
   SetToggleQuietly(False);
   UpdateFlatImage;
@@ -975,11 +975,11 @@ begin
   end;
   if Choice = scExit then
     FStatus.Text := 'Closing'
-  else if Choice = scContinueWithoutSR then
+  else if Choice = scContinueWithout3D then
     FStatus.Text := 'Glasses-free 3D off (' + StartProblemName(Problem) +
       '); tick Glasses-free 3D to try again'
   else
-    FStatus.Text := 'Starting LeiaSR...';
+    FStatus.Text := 'Starting the display...';
 end;
 
 procedure TfrmPlayer.StereoLog(Sender: TObject; const Msg: string);

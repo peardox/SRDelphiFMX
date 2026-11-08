@@ -1,0 +1,132 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{EB584342-10B8-4105-BBDD-416CF83173F6}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="packages\Spritely.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="packages\dclSpritely.dproj">
+            <Dependencies>packages\Spritely.dproj</Dependencies>
+        </Projects>
+        <Projects Include="packages\Lenticular.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="packages\dclLenticular.dproj">
+            <Dependencies>packages\Lenticular.dproj</Dependencies>
+        </Projects>
+        <Projects Include="LenticularDemoFMX\LenticularDemoFMX.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="LenticularDemoVCL\LenticularDemoVCL.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="MoviePlayerFMX\MoviePlayerFMX.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="StereoModel\StereoModel.dproj">
+            <Dependencies>packages\Spritely.dproj;packages\Lenticular.dproj</Dependencies>
+        </Projects>
+        <Projects Include="ProjectionTest\ProjectionTest.dproj">
+            <Dependencies>packages\Spritely.dproj</Dependencies>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="Spritely">
+        <MSBuild Projects="packages\Spritely.dproj"/>
+    </Target>
+    <Target Name="Spritely:Clean">
+        <MSBuild Projects="packages\Spritely.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="Spritely:Make">
+        <MSBuild Projects="packages\Spritely.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="dclSpritely">
+        <MSBuild Projects="packages\dclSpritely.dproj"/>
+    </Target>
+    <Target Name="dclSpritely:Clean">
+        <MSBuild Projects="packages\dclSpritely.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="dclSpritely:Make">
+        <MSBuild Projects="packages\dclSpritely.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Lenticular">
+        <MSBuild Projects="packages\Lenticular.dproj"/>
+    </Target>
+    <Target Name="Lenticular:Clean">
+        <MSBuild Projects="packages\Lenticular.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="Lenticular:Make">
+        <MSBuild Projects="packages\Lenticular.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="dclLenticular">
+        <MSBuild Projects="packages\dclLenticular.dproj"/>
+    </Target>
+    <Target Name="dclLenticular:Clean">
+        <MSBuild Projects="packages\dclLenticular.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="dclLenticular:Make">
+        <MSBuild Projects="packages\dclLenticular.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="LenticularDemoFMX">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj"/>
+    </Target>
+    <Target Name="LenticularDemoFMX:Clean">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="LenticularDemoFMX:Make">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="LenticularDemoVCL">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj"/>
+    </Target>
+    <Target Name="LenticularDemoVCL:Clean">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="LenticularDemoVCL:Make">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="MoviePlayerFMX">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Clean">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Make">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="StereoModel">
+        <MSBuild Projects="StereoModel\StereoModel.dproj"/>
+    </Target>
+    <Target Name="StereoModel:Clean">
+        <MSBuild Projects="StereoModel\StereoModel.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="StereoModel:Make">
+        <MSBuild Projects="StereoModel\StereoModel.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ProjectionTest">
+        <MSBuild Projects="ProjectionTest\ProjectionTest.dproj"/>
+    </Target>
+    <Target Name="ProjectionTest:Clean">
+        <MSBuild Projects="ProjectionTest\ProjectionTest.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ProjectionTest:Make">
+        <MSBuild Projects="ProjectionTest\ProjectionTest.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="Spritely;dclSpritely;Lenticular;dclLenticular;LenticularDemoFMX;LenticularDemoVCL;MoviePlayerFMX;StereoModel;ProjectionTest"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="Spritely:Clean;dclSpritely:Clean;Lenticular:Clean;dclLenticular:Clean;LenticularDemoFMX:Clean;LenticularDemoVCL:Clean;MoviePlayerFMX:Clean;StereoModel:Clean;ProjectionTest:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="Spritely:Make;dclSpritely:Make;Lenticular:Make;dclLenticular:Make;LenticularDemoFMX:Make;LenticularDemoVCL:Make;MoviePlayerFMX:Make;StereoModel:Make;ProjectionTest:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

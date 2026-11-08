@@ -1,0 +1,104 @@
+object Form2: TForm2
+  Left = 0
+  Top = 0
+  Caption = 'Form2'
+  ClientHeight = 480
+  ClientWidth = 640
+  FormFactor.Width = 320
+  FormFactor.Height = 480
+  FormFactor.Devices = [Desktop]
+  DesignerMasterStyle = 0
+  OnClose = FormClose
+  OnCreate = FormCreate
+  OnShow = FormShow
+  object MainViewLayout: TLayout
+    Align = Client
+    Size.Width = 640.000000000000000000
+    Size.Height = 443.000000000000000000
+    Size.PlatformDefault = False
+    TabOrder = 2
+    object ViewLayout: TLayout
+      Align = Client
+      Size.Width = 640.000000000000000000
+      Size.Height = 443.000000000000000000
+      Size.PlatformDefault = False
+      TabOrder = 0
+      object GorillaViewport1: TGorillaViewport
+        RendererType = ForwardRenderer
+        ManualRendering = False
+        UseFixedFrameRate = True
+        FixedFrameRate = 60
+        FrustumCulling = True
+        HighRes = False
+        VSync = False
+        NearPlane = 0.100000001490116100
+        FarPlane = 10000.000000000000000000
+        Fog = False
+        FogKind = fkLinear
+        FogDensity = 0.001000000047497451
+        FogStart = 100.000000000000000000
+        FogEnd = 500.000000000000000000
+        FogColor = claBlack
+        OpaqueSaturation = 0.000000000000000000
+        TranslucentSaturation = 1.500000000000000000
+        CompositeSaturation = 0.000000000000000000
+        EmissiveBlur = 0
+        Shadows.CascadeSplitLambda = 0.750000000000000000
+        Shadows.Strength = 1.000000000000000000
+        Shadows.Bias = 0.000500000023748726
+        Shadows.SlopeBias = 0.001000000047497451
+        Shadows.NormalOffset = 0.019999999552965160
+        GlobalIllumDetail = 0
+        GlobalIllumSoftness = 1.000000000000000000
+        ShadowStrength = 0.400000005960464500
+        ReflectionStrength = 0.000000000000000000
+        FXAA = 0
+        SSS_Enabled = False
+        SSS_NumSamples = 128
+        SSS_SampleStep = 0.050000000745058060
+        SSS_ShadowStrength = 2.000000000000000000
+        SSAO_Enabled = False
+        SSAO_Radius = 1.000000000000000000
+        SSAO_Bias = 0.500000000000000000
+        DiagnosticsActive = False
+        RendererOutputLayer = OutputAll
+        Size.Width = 640.000000000000000000
+        Size.Height = 443.000000000000000000
+        Size.PlatformDefault = False
+      end
+    end
+  end
+  object ControlLayout: TLayout
+    Align = Bottom
+    Position.Y = 443.000000000000000000
+    Size.Width = 640.000000000000000000
+    Size.Height = 37.000000000000000000
+    Size.PlatformDefault = False
+    TabOrder = 1
+    object btnStereo: TButton
+      Anchors = [akTop, akRight]
+      Position.X = 552.000000000000000000
+      Position.Y = 8.000000000000000000
+      StaysPressed = True
+      TabOrder = 0
+      Text = 'Stereo'
+      OnClick = btnStereoClick
+    end
+  end
+  object MainMenu1: TMainMenu
+    Left = 32
+    Top = 16
+    object FileMenuItem: TMenuItem
+      Text = 'File'
+      object OpenMenuItem: TMenuItem
+        Text = 'Open...'
+        OnClick = OpenMenuItemClick
+      end
+    end
+  end
+  object SpritelyOrbitalCamera1: TSpritelyOrbitalCamera
+    Viewport = GorillaViewport1
+    Left = 80
+    Top = 16
+  end
+end

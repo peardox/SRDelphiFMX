@@ -1,23 +1,23 @@
-{ @abstract(MoviePlayerFMX: 3D films on a LeiaSR eye-tracked 3D display.)
+{ @abstract(MoviePlayerFMX: 3D films on an eye-tracked lenticular 3D display.)
 
   Opens a half side-by-side (HSBS) film, or a single frame, and weaves it at
   its proper shape as a stereo pair, with the film's sound.
 
   @unorderedList(
     @item(@link(PlayerForm) holds the main window, the viewport and the log.)
-    @item(@link(SRStereoFrame) in @code(lib) holds a side-by-side frame
+    @item(@link(Lenticular.StereoFrame) in @code(lib) holds a side-by-side frame
       (full or half side-by-side) and fits it into the two views; it uses
       neither FMX nor VCL.)
-    @item(@link(SRVideoDecoder) in @code(lib) decodes a film's pictures with
+    @item(@link(Lenticular.VideoDecoder) in @code(lib) decodes a film's pictures with
       FFmpeg (headers in @code(ffmpeg-headers), DLLs copied from
       @code(dll\ffmpeg) by the build) on threads, timed by its sound, which
-      @link(SRAudioOutput) plays through WASAPI; neither uses FMX or VCL.)
-    @item(@link(FMX.SRMovieRenderer) in @code(lib) hands the current picture's
-      views to @link(FMX.SRStereoViewport)'s renderer.)
-    @item(@link(SRSettings) in @code(lib) keeps the eye separation and the
-      shared choices in @code(%APPDATA%\SRDelphiFMX\settings.json), as the
+      @link(Lenticular.AudioOutput) plays through WASAPI; neither uses FMX or VCL.)
+    @item(@link(Lenticular.MovieRenderer) in @code(lib) hands the current picture's
+      views to @link(Lenticular.StereoViewport)'s renderer.)
+    @item(@link(Lenticular.Settings) in @code(lib) keeps the eye separation and the
+      shared choices in @code(%APPDATA%\Peardox\LenticularDemos.json), as the
       demos do.)
-    @item(@link(SRDiagLog) in @code(lib) writes @code(MoviePlayerFMX.log)
+    @item(@link(Lenticular.DiagLog) in @code(lib) writes @code(MoviePlayerFMX.log)
       beside the executable, line by line, and records native crashes in it.
       Logs from earlier runs are moved into @code(oldlogs) beside it.)
     @item(FastMM5 (a submodule in @code(FastMM5)) is the memory manager. In
@@ -26,7 +26,7 @@
       copies it there), and writes @code(MoviePlayerFMX_FastMM.log).)
   )
 
-  Build for Windows 64-bit; the SR runtime is 64-bit only. }
+  Build for Windows 64-bit; the display runtime is 64-bit only. }
 program MoviePlayerFMX;
 
 uses
@@ -34,19 +34,18 @@ uses
   System.StartUpCopy,
   System.SysUtils,
   FMX.Forms,
-  SRDiagLog in '..\lib\SRDiagLog.pas',
-  SRSettings in '..\lib\SRSettings.pas',
+  Lenticular.DiagLog in '..\lib\Lenticular.DiagLog.pas',
+  Lenticular.Settings in '..\lib\Lenticular.Settings.pas',
   PlayerForm in 'ui\PlayerForm.pas' {frmPlayer},
-  FMX.SRStereoViewport in '..\lib\FMX.SRStereoViewport.pas',
-  FMX.SRMovieRenderer in '..\lib\FMX.SRMovieRenderer.pas',
-  SRStereoFrame in '..\lib\SRStereoFrame.pas',
-  SRVideoDecoder in '..\lib\SRVideoDecoder.pas',
-  SRAudioOutput in '..\lib\SRAudioOutput.pas',
-  SRBridge.Api in '..\lib\SRBridge.Api.pas',
-  SRGpuPreference in '..\lib\SRGpuPreference.pas',
-  SRStartProblem in '..\lib\SRStartProblem.pas',
-  SRSettingsDialog in '..\lib\SRSettingsDialog.pas',
-  SimulatedReality.Api in '..\lib\SimulatedReality.Api.pas';
+  Lenticular.StereoViewport in '..\lib\Lenticular.StereoViewport.pas',
+  Lenticular.MovieRenderer in '..\lib\Lenticular.MovieRenderer.pas',
+  Lenticular.StereoFrame in '..\lib\Lenticular.StereoFrame.pas',
+  Lenticular.VideoDecoder in '..\lib\Lenticular.VideoDecoder.pas',
+  Lenticular.AudioOutput in '..\lib\Lenticular.AudioOutput.pas',
+  LenticularBridge.Api in '..\lib\LenticularBridge.Api.pas',
+  Lenticular.GpuPreference in '..\lib\Lenticular.GpuPreference.pas',
+  Lenticular.StartProblem in '..\lib\Lenticular.StartProblem.pas',
+  Lenticular.SettingsDialog in '..\lib\Lenticular.SettingsDialog.pas';
 
 {$R *.res}
 

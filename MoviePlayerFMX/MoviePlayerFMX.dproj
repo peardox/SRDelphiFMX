@@ -69,7 +69,7 @@
         <DCC_F>false</DCC_F>
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <DCC_UnitSearchPath>..\lib;..\FastMM5;..\delphi-neon\Source;..\ffmpeg-headers\headers;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>..\lib;..\FastMM5;..\ffmpeg-headers\headers;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <VerInfo_Locale>2057</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=0.1.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=$(MSBuildProjectName);ProductVersion=0.1.0.0;Comments=</VerInfo_Keys>
         <Icon_MainIcon>MoviePlayerFMX_Icon.ico</Icon_MainIcon>
@@ -193,7 +193,7 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <Manifest_File>$(BDS)\bin\default_app.manifest</Manifest_File>
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
-        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\SRBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)
+        <PostBuildEvent><![CDATA[(copy /Y "$(PROJECTDIR)\..\dll\LenticularBridge.dll" "$(OUTPUTDIR)" || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)
 (copy /Y "$(PROJECTDIR)\..\dll\ffmpeg\*.dll" "$(OUTPUTDIR)" || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg's 64-bit GPL shared DLLs there, see README)
 (copy /Y "$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll" "$(OUTPUTDIR)" || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)
 $(PostBuildEvent)]]></PostBuildEvent>
@@ -219,22 +219,21 @@ $(PostBuildEvent)]]></PostBuildEvent>
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\FastMM5\FastMM5.pas"/>
-        <DCCReference Include="..\lib\SRDiagLog.pas"/>
-        <DCCReference Include="..\lib\SRSettings.pas"/>
+        <DCCReference Include="..\lib\Lenticular.DiagLog.pas"/>
+        <DCCReference Include="..\lib\Lenticular.Settings.pas"/>
         <DCCReference Include="ui\PlayerForm.pas">
             <Form>frmPlayer</Form>
             <FormType>fmx</FormType>
         </DCCReference>
-        <DCCReference Include="..\lib\FMX.SRStereoViewport.pas"/>
-        <DCCReference Include="..\lib\FMX.SRMovieRenderer.pas"/>
-        <DCCReference Include="..\lib\SRStereoFrame.pas"/>
-        <DCCReference Include="..\lib\SRVideoDecoder.pas"/>
-        <DCCReference Include="..\lib\SRAudioOutput.pas"/>
-        <DCCReference Include="..\lib\SRBridge.Api.pas"/>
-        <DCCReference Include="..\lib\SRGpuPreference.pas"/>
-        <DCCReference Include="..\lib\SRStartProblem.pas"/>
-        <DCCReference Include="..\lib\SRSettingsDialog.pas"/>
-        <DCCReference Include="..\lib\SimulatedReality.Api.pas"/>
+        <DCCReference Include="..\lib\Lenticular.StereoViewport.pas"/>
+        <DCCReference Include="..\lib\Lenticular.MovieRenderer.pas"/>
+        <DCCReference Include="..\lib\Lenticular.StereoFrame.pas"/>
+        <DCCReference Include="..\lib\Lenticular.VideoDecoder.pas"/>
+        <DCCReference Include="..\lib\Lenticular.AudioOutput.pas"/>
+        <DCCReference Include="..\lib\LenticularBridge.Api.pas"/>
+        <DCCReference Include="..\lib\Lenticular.GpuPreference.pas"/>
+        <DCCReference Include="..\lib\Lenticular.StartProblem.pas"/>
+        <DCCReference Include="..\lib\Lenticular.SettingsDialog.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -1259,7 +1258,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg's 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg&apos;s 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' And '$(Platform)'=='Win64'">
@@ -1267,7 +1266,7 @@ $(PostBuildEvent)]]></PostBuildEvent>
         <PreBuildEventIgnoreExitCode>False</PreBuildEventIgnoreExitCode>
         <PreLinkEvent/>
         <PreLinkEventIgnoreExitCode>False</PreLinkEventIgnoreExitCode>
-        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\SRBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\SRBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg's 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
+        <PostBuildEvent>(copy /Y &quot;$(PROJECTDIR)\..\dll\LenticularBridge.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\LenticularBridge.dll not copied - build the bridge first, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\dll\ffmpeg\*.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: dll\ffmpeg\*.dll not copied - put FFmpeg&apos;s 64-bit GPL shared DLLs there, see README)&amp;&amp;(copy /Y &quot;$(PROJECTDIR)\..\FastMM5\FullDebugMode DLL\Precompiled\FastMM_FullDebugMode64.dll&quot; &quot;$(OUTPUTDIR)&quot; || echo warning: FastMM_FullDebugMode64.dll not copied - run git submodule update --init)</PostBuildEvent>
         <PostBuildEventIgnoreExitCode>False</PostBuildEventIgnoreExitCode>
     </PropertyGroup>
 </Project>
