@@ -3,6 +3,17 @@
 This shows FMX `TViewport3D` scenes on an eye-tracked lenticular (glasses-free 3D) display from Delphi, and holds the Spritely and Lenticular component sets with StereoModel (see "Areas and rules"). Read `README.md` first, especially "Notes for Claude", then this file. The day-by-day history of how it got here (the full-screen fault hunt, the projection fixes, the zero-copy work) is in the git log up to commit `d42c73a`; this file keeps only what is true now.
 
 
+## Handover (8 November 2026, 19:43)
+
+**State.** StereoModel is merged in and builds: the owner applied LenticularMerge2 on top of the branch `missing` (6c96449 = `refactor` 9619d82 plus the new `Lenticular.groupproj`) and reports "all perfect now" (19:43). LenticularMerge1 had not reached the owner's copy (only its group file did, sent again on its own), so LenticularMerge2 carried the same 64 other files; the next zip follows LenticularMerge2. Packages rebuilt and the design packages installed from here. Not yet pushed as far as known: ask which branch holds it before building on GitHub.
+
+**Next: Sprite3D and the Spritely components.** The owner is about to see, in a session on peardox/Sprite3D, whether Sprite3D can use the Spritely components. The notes for that session are delivered as `Sprite3D-SpritelyNotes1.md` (folder `SpritelyNotes1-NOT-FOR-ANY-REPO`, for the Sprite3D session to read, not to commit anywhere). What matters from here:
+- Spritely lives HERE (`lib/Spritely.*`, `packages/Spritely`, `packages/dclSpritely`); Sprite3D uses it as an installed package (DCUs in the Dcp folder, no search path), it does not copy the units. Changes Sprite3D needs in Spritely come back to a session on this repository (as notes, or a zip for here), with the PACKAGE REBUILD line.
+- `TSpritelyOrbitalGorillaCamera` IS Sprite3D's `TSprite3DCamera` (unit `Sprite3DCamera`), renamed and grown (fits, Subject, target depth, the projection link); `TSpritelyOrbitalFraming` was `TSprite3DFraming`, `TSpritelyQuat` was `TQuat`, `TSpritelyLookAtMode` was `TLookAtMode`. Every name differs, so both can be linked into one program; whether Sprite3D drops its own copy is the owner's call.
+- Spritely must stay free of Sprite3D, as it is of Lenticular: Sprite3D may require Spritely, never the reverse.
+- Open questions in Spritely itself (from `StereoModel/CLAUDE.md`): a Windows chime on ProjectionTest's exit; "Depth 0" in the Front view not confirmed; `SetTargetDepth` changes a parallel view's size by design; the wheel never passes the target.
+- Also open from the merge: the EDID maker table in `Lenticular.Display` (`MakerName`) names monitor makers, Samsung among them, against the trademark rule; asked, not answered. Licence for the repository root, and the sources of `uvcube.glb` and `Mage.glb`, to record.
+
 ## Areas and rules (owner, 8 November 2026)
 
 StereoModel (peardox/StereoModel, which stays where it is but is no longer worked on) is merged in. Its handover, with its full history, is `StereoModel/CLAUDE.md`; read its rule sections before working on any of its files. The rules go by area:
