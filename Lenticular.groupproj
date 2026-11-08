@@ -1,0 +1,60 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{EB584342-10B8-4105-BBDD-416CF83173F6}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="LenticularDemoFMX\LenticularDemoFMX.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="LenticularDemoVCL\LenticularDemoVCL.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="MoviePlayerFMX\MoviePlayerFMX.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="LenticularDemoFMX">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj"/>
+    </Target>
+    <Target Name="LenticularDemoFMX:Clean">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="LenticularDemoFMX:Make">
+        <MSBuild Projects="LenticularDemoFMX\LenticularDemoFMX.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="LenticularDemoVCL">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj"/>
+    </Target>
+    <Target Name="LenticularDemoVCL:Clean">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="LenticularDemoVCL:Make">
+        <MSBuild Projects="LenticularDemoVCL\LenticularDemoVCL.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="MoviePlayerFMX">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Clean">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="MoviePlayerFMX:Make">
+        <MSBuild Projects="MoviePlayerFMX\MoviePlayerFMX.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="LenticularDemoFMX;LenticularDemoVCL;MoviePlayerFMX"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="LenticularDemoFMX:Clean;LenticularDemoVCL:Clean;MoviePlayerFMX:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="LenticularDemoFMX:Make;LenticularDemoVCL:Make;MoviePlayerFMX:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

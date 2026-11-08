@@ -1,4 +1,4 @@
-"""Heuristic PasDoc checker for the SimulatedReality units (adapted from GDEM's).
+"""Heuristic PasDoc checker for the Lenticular units (adapted from GDEM's).
 
 Usage, from the repository root:
 
@@ -7,7 +7,7 @@ Usage, from the repository root:
 which checks lib and every project folder (any folder holding a .dpr)
 together, or name the folders to check:
 
-    python3 tools/pasdoc_check.py lib SRDemoFMX
+    python3 tools/pasdoc_check.py lib LenticularDemoFMX
 
 It reads every .pas file in each folder and the folders inside it (lib and
 ui), and each program's .dpr. Names declared in any of them count for
@@ -98,7 +98,7 @@ for f in files:
             if depth:
                 problems.append(f'{label(f)}:{lineno}: unbalanced @{tm.group(1)}(')
         for lm in re.finditer(r'@link\(([^)\s]+)', body):
-            full = lm.group(1).lower()     # dotted unit names such as FMX.SRStereoViewport
+            full = lm.group(1).lower()     # dotted unit names such as Lenticular.StereoViewport
             target = full.split('.')[-1]
             if full not in declared and target not in declared and target not in KNOWN_EXTERNAL:
                 problems.append(f'{label(f)}:{lineno}: @link({lm.group(1)}) not found')

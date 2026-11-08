@@ -1,4 +1,4 @@
-/* ==== SimulatedReality: dark colours for PasDoc's HTML Help (.chm) ====
+/* ==== Lenticular: dark colours for PasDoc's HTML Help (.chm) ====
 
    tools\pasdoc.bat appends this file to the pasdoc.css that each HTML Help
    run writes (docs\chm\api, docs\chm\<program>), before hhc.exe compiles it,

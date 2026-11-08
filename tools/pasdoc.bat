@@ -1,9 +1,9 @@
 @echo off
-rem PasDoc reference of SimulatedReality (LeiaSR glasses-free 3D from Delphi),
+rem PasDoc reference of the Lenticular units (glasses-free 3D from Delphi),
 rem as HTML and as HTML Help (.chm), one set for the API and one per program:
 rem   docs\html\api            HTML: the shared units in lib (the API)
 rem   docs\chm\api             HTML Help as docs\html\api, compiled to a .chm
-rem   docs\html\<program>      HTML: one program (SRDemoFMX, SRDemoVCL,
+rem   docs\html\<program>      HTML: one program (LenticularDemoFMX, LenticularDemoVCL,
 rem                            MoviePlayerFMX, ...): its .dpr, its forms and
 rem                            the lib units it uses
 rem   docs\chm\<program>       HTML Help as docs\html\<program>, as a .chm
@@ -14,7 +14,7 @@ rem from its .dpr's uses clause (the units named "in '...'"): its forms, and
 rem the units from ..\lib, so a new program, form or lib unit is picked up
 rem without changing this script. Units from elsewhere (the FastMM5
 rem submodule) are left out. The api run takes every unit in lib except
-rem FMX.SRStereoViewport.Reg, which is design-time registration, not API.
+rem Lenticular.StereoViewport.Reg, which is design-time registration, not API.
 rem
 rem Needs pasdoc on the PATH (or set PASDOC=full path). The .chm files need
 rem Microsoft HTML Help Workshop's hhc.exe (set HHC=full path if it is not
@@ -31,9 +31,9 @@ rem pasdoc.css that PasDoc wrote, so PasDoc's own stylesheet stays as it is
 rem and no copy of it is kept here. Set PASDOC_DARK=0 to leave them out.
 rem
 rem Defines: PasDoc defines no platform symbols itself, so the Win64 view is
-rem chosen here (the only one there is: the SR runtime is 64-bit only).
+rem chosen here (the only one there is: the display runtime is 64-bit only).
 rem FastMM_FullDebugModeWhenDLLAvailable is left undefined, the Release view
-rem of the .dpr files. The ffmpeg-headers units are named in SRVideoDecoder's
+rem of the .dpr files. The ffmpeg-headers units are named in Lenticular.VideoDecoder's
 rem uses clause but never parsed.
 
 setlocal
@@ -56,7 +56,7 @@ if %FOUND%==0 (
 if "%HHC%"=="" set HHC=%ProgramFiles(x86)%\HTML Help Workshop\hhc.exe
 
 set COMMON=--define PASDOC --define MSWINDOWS --define WIN64 --define CPUX64 --include lib --visible-members protected,public,published,automated --inherited-members default-hide --write-uses-list --verbosity 3
-set SUBTITLE=LeiaSR glasses-free 3D from Delphi
+set SUBTITLE=glasses-free 3D from Delphi
 
 set FAILED=0
 set RUNS=0
@@ -74,8 +74,8 @@ echo ==== Cleaning the output folders
 call :clean docs\html
 call :clean docs\chm
 
-call :run html api docs\html\api --name SimulatedReality --title "SimulatedReality API - %SUBTITLE%" %APISRC%
-call :run htmlhelp api docs\chm\api --name SimulatedReality --title "SimulatedReality API - %SUBTITLE%" %APISRC%
+call :run html api docs\html\api --name Lenticular --title "Lenticular API - %SUBTITLE%" %APISRC%
+call :run htmlhelp api docs\chm\api --name Lenticular --title "Lenticular API - %SUBTITLE%" %APISRC%
 for %%A in (%APPS%) do call :program %%A
 
 call :chm docs\chm\api
